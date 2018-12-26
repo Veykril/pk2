@@ -1,7 +1,7 @@
 use std::io::Result;
 use std::path::Path;
 
-use crate::archive::{block_chain::PackBlockChain, Archive};
+use crate::archive::{PackBlockChain, Archive};
 use crate::fs::file::File;
 
 pub struct Directory<'a> {

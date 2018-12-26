@@ -1,4 +1,5 @@
 use std::io::{Read, Result, Write};
+use std::ops;
 
 use crate::archive::entry::PackEntry;
 
@@ -75,7 +76,6 @@ impl PackBlock {
     }
 }
 
-use std::ops;
 impl ops::Index<usize> for PackBlock {
     type Output = PackEntry;
     fn index(&self, idx: usize) -> &Self::Output {

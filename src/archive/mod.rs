@@ -11,14 +11,14 @@ use crate::fs::{Directory, File};
 use crate::Blowfish;
 
 //pub mod pack_block;
-pub mod block_chain;
-pub mod entry;
-pub mod header;
+mod block_chain;
+mod entry;
+mod header;
 
 //use self::pack_block::PackBlock;
-pub use self::block_chain::{PackBlock, PackBlockChain};
-use self::entry::PackEntry;
-pub use self::header::PackHeader;
+pub(crate) use self::block_chain::{PackBlock, PackBlockChain};
+pub(crate) use self::entry::PackEntry;
+pub(crate) use self::header::PackHeader;
 
 pub struct Archive {
     header: PackHeader,
@@ -162,7 +162,7 @@ impl Archive {
         if let Ok(path) = path.strip_prefix("/") {
             self.resolve_path_to_entry_at(&self.blockchains[&PK2_ROOT_BLOCK], path)
         } else {
-            io::Error::new(io::ErrorKind::NotFound, "Absolute path expected")
+            Err(io::Error::new(io::ErrorKind::NotFound, "Absolute path expected"))
         }
     }
 
@@ -171,7 +171,7 @@ impl Archive {
         if let Ok(path) = path.strip_prefix("/") {
             self.resolve_path_to_block_chain_at(&self.blockchains[&PK2_ROOT_BLOCK], path)
         } else {
-            io::Error::new(io::ErrorKind::NotFound, "Absolute path expected")
+            Err(io::Error::new(io::ErrorKind::NotFound, "Absolute path expected"))
         }
     }
 

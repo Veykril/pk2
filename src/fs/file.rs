@@ -1,6 +1,6 @@
 use std::io::{self, Read, Result, Seek, SeekFrom};
 
-use crate::archive::{entry::PackEntry, Archive};
+use crate::archive::{PackEntry, Archive};
 
 pub struct File<'a> {
     archive: &'a Archive,

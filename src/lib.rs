@@ -2,7 +2,7 @@
 pub mod archive;
 pub mod fs;
 
-pub type Blowfish = block_modes::Ecb<blowfish::BlowfishLE, block_modes::block_padding::ZeroPadding>;
+pub(crate) type Blowfish = block_modes::Ecb<blowfish::BlowfishLE, block_modes::block_padding::ZeroPadding>;
 
 #[allow(non_snake_case)]
 #[derive(Clone, Copy, Debug)]
@@ -11,7 +11,7 @@ pub struct FILETIME {
     dwHighDateTime: u32,
 }
 
-pub mod constants {
+pub(crate) mod constants {
     use crate::FILETIME;
 
     pub const PK2_VERSION: u32 = 0x0100_0002;
