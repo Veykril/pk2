@@ -22,4 +22,10 @@ impl<'a> Directory<'a> {
             .resolve_path_to_entry_at(self.block_chain.blocks[0].offset, path.as_ref())
             .map(|(_, _, entry)| File::new(self.archive, entry))
     }
+
+    pub fn open_dir<P: AsRef<Path>>(&self, path: P) -> Result<Directory> {
+        self.archive
+            .resolve_path_to_block_chain_index_at(self.block_chain.blocks[0].offset, path.as_ref())
+            .map(|idx| Directory::new(self.archive, &self.blockchains[&idx]))
+    }
 }

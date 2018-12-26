@@ -36,6 +36,17 @@ impl Default for PackEntry {
 }
 
 impl PackEntry {
+    pub fn new_folder(name: String, pos_children: u64, next_chain: Option<NonZeroU64>) -> Self {
+        PackEntry::Folder {
+            name,
+            access_time: Default::default(),
+            create_time: Default::default(),
+            modify_time: Default::default(),
+            pos_children,
+            next_chain,
+        }
+    }
+
     pub fn next_chain(&self) -> Option<NonZeroU64> {
         match self {
             PackEntry::Empty => None,
@@ -45,10 +56,29 @@ impl PackEntry {
         }
     }
 
+    pub fn set_next_chain(&mut self, nc: u64) {
+        match self {
+            PackEntry::Empty => (),
+            PackEntry::Folder {
+                ref mut next_chain, ..
+            }
+            | PackEntry::File {
+                ref mut next_chain, ..
+            } => *next_chain = NonZeroU64::new(nc),
+        }
+    }
+
     pub fn name(&self) -> Option<&str> {
         match self {
             PackEntry::Empty => None,
             PackEntry::Folder { name, .. } | PackEntry::File { name, .. } => Some(name),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            PackEntry::Empty => true,
+            _ => false,
         }
     }
 }

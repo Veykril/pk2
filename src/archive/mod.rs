@@ -167,12 +167,12 @@ impl Archive {
         let name = component_to_str(components.next_back().unwrap()); // todo remove unwrap
         let chain =
             self.resolve_path_to_block_chain_index_at(current_chain, components.as_path())?;
-        let (idx, entry) = &self.blockchains[&chain]
-            .into_iter()
+        let (idx, entry) = self.blockchains[&chain]
+            .iter()
             .enumerate()
             .find(|(_, entry)| entry.name() == name)
             .ok_or_else(|| err_not_found(["Unable to find file ", name.unwrap()].join("")))?;
-        Ok((chain, *idx, entry))
+        Ok((chain, idx, entry))
     }
 
     pub(crate) fn resolve_path_to_block_chain_index_at(
@@ -189,23 +189,122 @@ impl Archive {
     }
 
     fn find_block_chain_index_in(&self, chain: &PackBlockChain, folder: &str) -> Result<u64> {
-        for entry in chain {
-            match entry {
+        for entry in chain.iter() {
+            return match entry {
                 PackEntry::Folder {
                     name, pos_children, ..
-                } if name == folder => return Ok(*pos_children),
+                } if name == folder => Ok(*pos_children),
+                PackEntry::File { name, .. } if name == folder => Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Expected a directory, found a file",
+                )),
+                _ => continue,
+            };
+        }
+        Err(err_not_found(
+            ["Unable to find directory ", folder].join(""),
+        ))
+    }
+
+    fn create_entry_at(&mut self, mut chain: u64, path: &Path) -> Result<(u64, usize)> {
+        let mut components = path.components().peekable();
+        // check how far of the path exists
+        while let Some(component) = components.peek() {
+            let name = component_to_str(*component).unwrap();
+            match self.find_block_chain_index_in(&self.blockchains[&chain], name) {
+                Ok(i) => {
+                    chain = i;
+                    let _ = components.next();
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
+                    if *component == Component::ParentDir {
+                        return Err(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            "The path is a parent of the root directory",
+                        ));
+                    } else {
+                        break;
+                    }
+                }
+                // the current name already exists as a file
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+        }
+        while let Some(component) = components.next() {
+            let name = component_to_str(component).unwrap();
+            match component {
+                // use inserted indices
+                Component::Normal(p) => {
+                    let opt = self
+                        .blockchains
+                        .get_mut(&chain)
+                        .unwrap()
+                        .iter_mut()
+                        .enumerate()
+                        .find(|(_, entry)| entry.is_empty());
+                    match opt {
+                        Some((idx, entry)) => {
+                            if let Some(c) = components.peek() {
+                                let next_block_offset = self.file.borrow().metadata()?.len();
+                                *entry = PackEntry::new_folder(
+                                    component_to_str(*c).unwrap().to_owned(),
+                                    next_block_offset,
+                                    None,
+                                );
+                                let block = self.create_new_block_at(next_block_offset)?;
+                                self.blockchains
+                                    .insert(next_block_offset, PackBlockChain::new(vec![block]));
+                            } else {
+                                return Ok((chain, idx));
+                            }
+                        }
+                        None => {
+                            let next_block_offset = self.file.borrow().metadata()?.len();
+                            let block = self.create_new_block_at(next_block_offset)?;
+                            let block_chain = self.blockchains.get_mut(&chain).unwrap();
+                            block_chain.blocks.last_mut().unwrap()[PK2_FILE_BLOCK_ENTRY_COUNT - 1]
+                                .set_next_chain(next_block_offset);
+                            block_chain.blocks.push(block);
+                        }
+                    }
+                }
                 _ => (),
             }
         }
-        Err(err_not_found(["Unable to find folder ", folder].join("")))
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "Path already exists",
+        ))
+    }
+
+    fn create_new_block_at(&mut self, offset: u64) -> Result<PackBlock> {
+        let mut buf = [0; PK2_FILE_BLOCK_SIZE];
+        let mut block = PackBlock {
+            offset: 0,
+            entries: Default::default(),
+        };
+        block.to_writer(&mut Cursor::new(&mut buf[..]))?;
+        let _ = self.bf.encrypt_nopad(&mut buf);
+        let mut file = self.file.borrow_mut();
+        file.seek(SeekFrom::Start(offset))?;
+        file.write_all(&buf)?;
+        block.offset = offset;
+        Ok(block)
     }
 }
 
 impl Archive {
-    /*
-    pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> Result<FileMut> {
-        unimplemented!()
-    }*/
+    pub fn create_file<P: AsRef<Path>>(&mut self, path: P, size: u32) -> Result<FileMut> {
+        if let Ok(path) = path.as_ref().strip_prefix("/") {
+            self.create_entry_at(PK2_ROOT_BLOCK, path.as_ref())?;
+
+            unimplemented!()
+        } else {
+            Err(err_not_found("Absolute path expected".to_owned()))
+        }
+    }
 
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<File> {
         let (_, _, entry) = self.resolve_path_to_entry(path.as_ref())?;
@@ -225,10 +324,12 @@ impl Archive {
             unimplemented!()
         }
     */
+
     pub fn open_dir<P: AsRef<Path>>(&self, path: P) -> Result<Directory> {
         let chain = self.resolve_path_to_block_chain(path.as_ref())?;
         Ok(Directory::new(self, chain))
     }
+
     /*
     pub fn open_dir_mut<P: AsRef<Path>>(&mut self, path: P) -> Result<DirMut> {
         unimplemented!()

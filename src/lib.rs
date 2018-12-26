@@ -6,7 +6,7 @@ pub(crate) type Blowfish =
     block_modes::Ecb<blowfish::BlowfishLE, block_modes::block_padding::ZeroPadding>;
 
 #[allow(non_snake_case)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct FILETIME {
     dwLowDateTime: u32,
     dwHighDateTime: u32,

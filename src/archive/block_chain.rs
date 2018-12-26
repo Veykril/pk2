@@ -13,6 +13,16 @@ impl PackBlockChain {
     pub(crate) fn new(blocks: Vec<PackBlock>) -> Self {
         PackBlockChain { blocks }
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &'_ PackEntry> + '_ {
+        self.blocks.iter().flat_map(|blocks| &blocks.entries)
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &'_ mut PackEntry> + '_ {
+        self.blocks
+            .iter_mut()
+            .flat_map(|blocks| &mut blocks.entries)
+    }
 }
 
 impl ops::Index<usize> for PackBlockChain {
@@ -27,45 +37,6 @@ impl ops::IndexMut<usize> for PackBlockChain {
         &mut self.blocks[idx / PK2_FILE_BLOCK_ENTRY_COUNT][idx % PK2_FILE_BLOCK_ENTRY_COUNT]
     }
 }
-
-impl<'a> IntoIterator for &'a PackBlockChain {
-    type Item = &'a PackEntry;
-    type IntoIter = PackBlockChainIter<'a>;
-    fn into_iter(self) -> Self::IntoIter {
-        PackBlockChainIter {
-            block_chain_index: 0,
-            block_index: 0,
-            blocks: &self.blocks,
-        }
-    }
-}
-
-pub struct PackBlockChainIter<'a> {
-    block_chain_index: usize,
-    block_index: usize,
-    blocks: &'a [PackBlock],
-}
-
-impl<'a> Iterator for PackBlockChainIter<'a> {
-    type Item = &'a PackEntry;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.block_chain_index < self.blocks.len() {
-            let block = &self.blocks[self.block_chain_index];
-            if self.block_index < block.entries.len() {
-                self.block_index += 1;
-                Some(&block[self.block_index - 1])
-            } else {
-                self.block_index = 0;
-                self.block_chain_index += 1;
-                None
-            }
-        } else {
-            None
-        }
-    }
-}
-
-impl<'a> std::iter::FusedIterator for PackBlockChainIter<'a> {}
 
 #[derive(Debug)]
 pub struct PackBlock {
