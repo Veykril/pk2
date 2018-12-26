@@ -6,3 +6,4 @@ Cargo.lock
 *.pk2
 /gfxfilemanager-compat
 /pk2tools
+src/main.rs
