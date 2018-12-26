@@ -132,49 +132,77 @@ impl Archive {
 }
 
 impl Archive {
-    pub fn resolve_path_to_entry(&self, path: &Path) -> Result<&PackEntry> {
-        let components = canonicalize(path)?;
-        let (last, mut components) = (components.len() - 1, components.into_iter().enumerate());
-
-        if let Some((_, Component::RootDir)) = components.next() {
-            let mut current_chain = &self.blockchains[&PK2_ROOT_BLOCK];
-            for (idx, component) in components {
-                if let Component::Normal(p) = component {
-                    let p = p.to_str().unwrap();
-                    if idx == last {
-                        return current_chain
-                            .into_iter()
-                            .find(|entry| entry.name() == Some(p))
-                            .ok_or_else(|| {
-                                io::Error::new(
-                                    io::ErrorKind::NotFound,
-                                    ["Unable to find file ", p].join(""),
-                                )
-                            });
-                    } else {
-                        current_chain = self.find_blockchain_in_blockchain(current_chain, p)?;
-                    }
-                }
+    #[allow(dead_code)]
+    fn resolve_path_to_entry_at2<'a>(
+        &'a self,
+        mut current_chain: &'a PackBlockChain,
+        path: &Path,
+    ) -> Result<&'a PackEntry> {
+        let mut components = path.components().peekable();
+        let mut p = "";
+        while let Some(component) = components.next() {
+            p = component_to_str(component).unwrap();
+            if components.peek().is_none() {
+                break;
             }
+            current_chain = self.find_blockchain_in_blockchain(current_chain, p)?;
         }
-        unimplemented!("relative paths havent been implemented yet");
+        current_chain
+            .into_iter()
+            .find(|entry| entry.name() == Some(p))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    ["Unable to find file ", p].join(""),
+                )
+            })
     }
 
-    pub fn resolve_path_to_block_chain(&self, path: &Path) -> Result<&PackBlockChain> {
-        let mut components = canonicalize(path)?.into_iter();
-
-        if let Some(Component::RootDir) = components.next() {
-            let mut current_chain = &self.blockchains[&PK2_ROOT_BLOCK];
-            for component in components {
-                if let Component::Normal(p) = component {
-                    current_chain =
-                        self.find_blockchain_in_blockchain(current_chain, p.to_str().unwrap())?;
-                }
-            }
-            Ok(current_chain)
+    fn resolve_path_to_entry(&self, path: &Path) -> Result<&PackEntry> {
+        if let Ok(path) = path.strip_prefix("/") {
+            self.resolve_path_to_entry_at(&self.blockchains[&PK2_ROOT_BLOCK], path)
         } else {
-            unimplemented!("relative paths havent been implemented yet");
+            io::Error::new(io::ErrorKind::NotFound, "Absolute path expected")
         }
+    }
+
+    // code duplication yay
+    fn resolve_path_to_block_chain(&self, path: &Path) -> Result<&PackBlockChain> {
+        if let Ok(path) = path.strip_prefix("/") {
+            self.resolve_path_to_block_chain_at(&self.blockchains[&PK2_ROOT_BLOCK], path)
+        } else {
+            io::Error::new(io::ErrorKind::NotFound, "Absolute path expected")
+        }
+    }
+
+    pub(crate) fn resolve_path_to_entry_at<'a>(
+        &'a self,
+        current_chain: &'a PackBlockChain,
+        path: &Path,
+    ) -> Result<&'a PackEntry> {
+        let mut components = path.components();
+        let name = component_to_str(components.next_back().unwrap()); // todo remove unwrap
+        self.resolve_path_to_block_chain_at(current_chain, components.as_path())?
+            .into_iter()
+            .find(|entry| entry.name() == name)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    ["Unable to find file ", name.unwrap()].join(""),
+                )
+            })
+    }
+
+    pub(crate) fn resolve_path_to_block_chain_at<'a>(
+        &'a self,
+        mut current_chain: &'a PackBlockChain,
+        path: &Path,
+    ) -> Result<&'a PackBlockChain> {
+        for component in path.components() {
+            let p = component_to_str(component).unwrap();
+            current_chain = self.find_blockchain_in_blockchain(current_chain, p)?;
+        }
+        Ok(current_chain)
     }
 
     fn find_blockchain_in_blockchain(
@@ -199,7 +227,9 @@ impl Archive {
             ["Unable to find folder ", folder].join(""),
         ))
     }
+}
 
+impl Archive {
     /*
     pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> Result<FileMut> {
         unimplemented!()
@@ -232,23 +262,13 @@ impl Archive {
     }*/
 }
 
-fn canonicalize(path: &Path) -> Result<Vec<Component>> {
-    let mut components = Vec::with_capacity(8);
-    for c in path.components() {
-        match c {
-            Component::CurDir => continue,
-            Component::ParentDir => {
-                if components.pop().is_none() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        "Cannot leave root",
-                    ));
-                }
-            }
-            c => components.push(c),
-        }
+fn component_to_str(component: Component) -> Option<&str> {
+    match component {
+        Component::Normal(p) => p.to_str(),
+        Component::ParentDir => Some(".."),
+        Component::CurDir => Some("."),
+        _ => None,
     }
-    Ok(components)
 }
 
 fn gen_final_blowfish_key(key: &[u8]) -> Vec<u8> {

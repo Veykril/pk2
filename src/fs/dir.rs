@@ -18,6 +18,8 @@ impl<'a> Directory<'a> {
     }
 
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<File> {
-        unimplemented!()
+        self.archive
+            .resolve_path_to_entry_at(self.block_chain, path.as_ref())
+            .map(|entry| File::new(self.archive, entry))
     }
 }
