@@ -1,0 +1,8 @@
+/target/
+Cargo.lock
+**/*.rs.bk
+.idea/
+
+*.pk2
+/gfxfilemanager-compat
+/pk2tools

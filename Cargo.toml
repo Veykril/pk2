@@ -1,0 +1,12 @@
+[package]
+name = "gfxfilemanager"
+version = "0.1.0"
+authors = ["Lukas Wirth <lukastw97@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+block-modes = "0.2.0"
+blowfish = "0.4.0"
+byteorder = "1"
+encoding = "0.2.33"
+hashbrown = "0.1.7"
