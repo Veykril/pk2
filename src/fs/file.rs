@@ -3,8 +3,11 @@ use std::path::Path;
 
 use crate::archive::{Archive, PackEntry};
 
+#[derive(Derivative)]
+#[derivative(Debug)]
 #[derive(Copy, Clone)]
 pub struct File<'a> {
+    #[derivative(Debug = "ignore")]
     archive: &'a Archive,
     entry: &'a PackEntry,
     pos: u64, //internal seek
@@ -23,6 +26,14 @@ impl<'a> File<'a> {
                 pos: 0,
             },
             _ => panic!("tried constructing file object with wrong PackEntry"),
+        }
+    }
+
+    #[inline]
+    pub fn name(&self) -> &str {
+        match self.entry {
+            PackEntry::File { name, .. } => name,
+            _ => unreachable!(),
         }
     }
 

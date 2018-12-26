@@ -1,4 +1,7 @@
 #![allow(clippy::cast_lossless)]
+#[macro_use]
+extern crate derivative;
+
 pub mod archive;
 pub mod fs;
 

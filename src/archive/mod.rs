@@ -164,15 +164,19 @@ impl Archive {
         path: &Path,
     ) -> Result<(u64, usize, &PackEntry)> {
         let mut components = path.components();
-        let name = component_to_str(components.next_back().unwrap()); // todo remove unwrap
-        let chain =
-            self.resolve_path_to_block_chain_index_at(current_chain, components.as_path())?;
-        let (idx, entry) = self.blockchains[&chain]
-            .iter()
-            .enumerate()
-            .find(|(_, entry)| entry.name() == name)
-            .ok_or_else(|| err_not_found(["Unable to find file ", name.unwrap()].join("")))?;
-        Ok((chain, idx, entry))
+        if let Some(c) = components.next_back() {
+            let name = component_to_str(c); // todo remove unwrap
+            let chain =
+                self.resolve_path_to_block_chain_index_at(current_chain, components.as_path())?;
+            let (idx, entry) = self.blockchains[&chain]
+                .iter()
+                .enumerate()
+                .find(|(_, entry)| entry.name() == name)
+                .ok_or_else(|| err_not_found(["Unable to find file ", name.unwrap()].join("")))?;
+            Ok((chain, idx, entry))
+        } else {
+            panic!("cant implement root as a dir");
+        }
     }
 
     pub(crate) fn resolve_path_to_block_chain_index_at(
@@ -326,8 +330,12 @@ impl Archive {
     */
 
     pub fn open_dir<P: AsRef<Path>>(&self, path: P) -> Result<Directory> {
-        let chain = self.resolve_path_to_block_chain(path.as_ref())?;
-        Ok(Directory::new(self, chain))
+        let (_, _, entry) = self.resolve_path_to_entry(path.as_ref())?;
+        Ok(Directory::new(
+            self,
+            entry,
+            &self.blockchains[&entry.pos_children().unwrap()],
+        ))
     }
 
     /*

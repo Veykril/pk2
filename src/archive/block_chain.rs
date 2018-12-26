@@ -38,9 +38,11 @@ impl ops::IndexMut<usize> for PackBlockChain {
     }
 }
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct PackBlock {
     pub offset: u64,
+    #[derivative(Debug = "ignore")]
     pub entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT],
 }
 

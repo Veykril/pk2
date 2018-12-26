@@ -7,21 +7,29 @@ use std::num::NonZeroU64;
 use crate::constants::PK2_FILE_ENTRY_SIZE;
 use crate::FILETIME;
 
-#[derive(Clone, Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
+#[derive(Clone)]
 pub enum PackEntry {
     Empty,
     Folder {
         name: String,
+        #[derivative(Debug = "ignore")]
         access_time: FILETIME,
+        #[derivative(Debug = "ignore")]
         create_time: FILETIME,
+        #[derivative(Debug = "ignore")]
         modify_time: FILETIME,
         pos_children: u64,
         next_chain: Option<NonZeroU64>,
     },
     File {
         name: String,
+        #[derivative(Debug = "ignore")]
         access_time: FILETIME,
+        #[derivative(Debug = "ignore")]
         create_time: FILETIME,
+        #[derivative(Debug = "ignore")]
         modify_time: FILETIME,
         pos_data: u64,
         size: u32,
@@ -44,6 +52,13 @@ impl PackEntry {
             modify_time: Default::default(),
             pos_children,
             next_chain,
+        }
+    }
+
+    pub fn pos_children(&self) -> Option<u64> {
+        match *self {
+            PackEntry::Folder { pos_children, .. } => Some(pos_children),
+            _ => None,
         }
     }
 
