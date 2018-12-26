@@ -1,7 +1,7 @@
 use std::io::Result;
 use std::path::Path;
 
-use crate::archive::{PackBlockChain, Archive};
+use crate::archive::{Archive, PackBlockChain};
 use crate::fs::file::File;
 
 pub struct Directory<'a> {
@@ -19,7 +19,7 @@ impl<'a> Directory<'a> {
 
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<File> {
         self.archive
-            .resolve_path_to_entry_at(self.block_chain, path.as_ref())
-            .map(|entry| File::new(self.archive, entry))
+            .resolve_path_to_entry_at(self.block_chain.blocks[0].offset, path.as_ref())
+            .map(|(_, _, entry)| File::new(self.archive, entry))
     }
 }

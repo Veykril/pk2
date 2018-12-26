@@ -1,7 +1,9 @@
-use std::io::{self, Read, Result, Seek, SeekFrom};
+use std::io::{self, Read, Result, Seek, SeekFrom, Write};
+use std::path::Path;
 
-use crate::archive::{PackEntry, Archive};
+use crate::archive::{Archive, PackEntry};
 
+#[derive(Copy, Clone)]
 pub struct File<'a> {
     archive: &'a Archive,
     entry: &'a PackEntry,
@@ -9,7 +11,11 @@ pub struct File<'a> {
 }
 
 impl<'a> File<'a> {
-    pub fn new(archive: &'a Archive, entry: &'a PackEntry) -> Self {
+    pub fn open<P: AsRef<Path>>(archive: &'a Archive, path: P) -> Result<Self> {
+        archive.open_file(path)
+    }
+
+    pub(crate) fn new(archive: &'a Archive, entry: &'a PackEntry) -> Self {
         match entry {
             PackEntry::File { .. } => File {
                 archive,
@@ -70,5 +76,86 @@ impl Seek for File<'_> {
             self.pos = new_pos as u64;
             Ok(self.pos)
         }
+    }
+}
+
+pub struct FileMut<'a> {
+    archive: &'a mut Archive,
+    /// we cannot have access to a `&'a mut PackEntry` here because we would mutably alias it with the archive refernce then
+    map_index: u64,
+    block_chain_index: usize,
+    pos: u64, //internal seek
+}
+
+impl<'a> FileMut<'a> {
+    pub fn open<P: AsRef<Path>>(archive: &'a mut Archive, path: P) -> Result<Self> {
+        archive.open_file_mut(path)
+    }
+
+    pub(crate) fn new(archive: &'a mut Archive, map_index: u64, block_chain_index: usize) -> Self {
+        FileMut {
+            archive,
+            map_index,
+            block_chain_index,
+            pos: 0,
+        }
+    }
+
+    fn to_immutable(&self) -> File {
+        File {
+            archive: self.archive,
+            entry: self.entry(),
+            pos: self.pos,
+        }
+    }
+
+    fn entry(&self) -> &PackEntry {
+        &self.archive.blockchains[&self.map_index][self.block_chain_index]
+    }
+
+    fn entry_mut(&mut self) -> &mut PackEntry {
+        &mut self.archive.blockchains.get_mut(&self.map_index).unwrap()[self.block_chain_index]
+    }
+}
+
+impl Read for FileMut<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        let mut this = self.to_immutable();
+        let n = this.read(buf)?;
+        self.pos = this.pos;
+        Ok(n)
+    }
+}
+
+impl Seek for FileMut<'_> {
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
+        self.pos = self.to_immutable().seek(pos)?;
+        Ok(self.pos)
+    }
+}
+
+impl Write for FileMut<'_> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        if buf.is_empty() {
+            Ok(0)
+        } else {
+            let (pos_data, size) = match *self.entry() {
+                PackEntry::File { pos_data, size, .. } => (pos_data, size),
+                _ => unreachable!(),
+            };
+            let n = match self.archive.file.borrow_mut() {
+                mut file => {
+                    file.seek(SeekFrom::Start(pos_data + self.pos))?;
+                    let len = (size as usize - self.pos as usize).min(buf.len());
+                    file.write(&buf[..len])?
+                }
+            };
+            self.seek(SeekFrom::Current(n as i64)).unwrap();
+            Ok(n)
+        }
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.archive.file.borrow_mut().flush()
     }
 }

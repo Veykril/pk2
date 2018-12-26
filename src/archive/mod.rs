@@ -3,11 +3,11 @@ use hashbrown::HashMap;
 
 use std::cell::RefCell;
 use std::fs::File as StdFile;
-use std::io::{self, Cursor, Read, Result, Seek, SeekFrom};
+use std::io::{self, Cursor, Read, Result, Seek, SeekFrom, Write};
 use std::path::{Component, Path};
 
 use crate::constants::*;
-use crate::fs::{Directory, File};
+use crate::fs::{Directory, File, FileMut};
 use crate::Blowfish;
 
 //pub mod pack_block;
@@ -31,16 +31,26 @@ impl Archive {
     pub fn create<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Result<Self> {
         let mut file = StdFile::create(path)?;
         let mut bf = Blowfish::new_varkey(&gen_final_blowfish_key(key.as_ref())).unwrap();
-        let header = PackHeader::new(&mut bf);
+        let header = PackHeader::new_encrypted(&mut bf);
 
         header.to_writer(&mut file)?;
+        let mut buf = [0; PK2_FILE_BLOCK_SIZE];
+        PackBlock {
+            offset: PK2_ROOT_BLOCK,
+            entries: Default::default(),
+        }
+        .to_writer(&mut Cursor::new(&mut buf[..]))?;
+        let _ = bf.encrypt_nopad(&mut buf);
+        file.write_all(&buf)?;
 
-        Ok(Archive {
+        let mut this = Archive {
             header,
             bf,
             file: RefCell::new(file),
             blockchains: HashMap::new(),
-        })
+        };
+        this.build_block_index()?;
+        Ok(this)
     }
 
     pub fn open<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Result<Self> {
@@ -60,7 +70,7 @@ impl Archive {
         }
         let mut bf = Blowfish::new_varkey(&gen_final_blowfish_key(key.as_ref())).unwrap();
         if header.encrypted {
-            let mut checksum = PK2_CHECKSUM;
+            let mut checksum = *PK2_CHECKSUM;
             let _ = bf.encrypt_nopad(&mut checksum);
             if checksum[..PK2_CHECKSUM_STORED] != header.verify[..PK2_CHECKSUM_STORED] {
                 Err(io::Error::new(
@@ -69,8 +79,6 @@ impl Archive {
                 ))?;
             }
         }
-
-        println!("{:?}", header);
 
         let mut this = Archive {
             header,
@@ -132,100 +140,64 @@ impl Archive {
 }
 
 impl Archive {
-    #[allow(dead_code)]
-    fn resolve_path_to_entry_at2<'a>(
-        &'a self,
-        mut current_chain: &'a PackBlockChain,
-        path: &Path,
-    ) -> Result<&'a PackEntry> {
-        let mut components = path.components().peekable();
-        let mut p = "";
-        while let Some(component) = components.next() {
-            p = component_to_str(component).unwrap();
-            if components.peek().is_none() {
-                break;
-            }
-            current_chain = self.find_blockchain_in_blockchain(current_chain, p)?;
-        }
-        current_chain
-            .into_iter()
-            .find(|entry| entry.name() == Some(p))
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    ["Unable to find file ", p].join(""),
-                )
-            })
-    }
-
-    fn resolve_path_to_entry(&self, path: &Path) -> Result<&PackEntry> {
+    fn resolve_path_to_entry(&self, path: &Path) -> Result<(u64, usize, &PackEntry)> {
         if let Ok(path) = path.strip_prefix("/") {
-            self.resolve_path_to_entry_at(&self.blockchains[&PK2_ROOT_BLOCK], path)
+            self.resolve_path_to_entry_at(PK2_ROOT_BLOCK, path)
         } else {
-            Err(io::Error::new(io::ErrorKind::NotFound, "Absolute path expected"))
+            Err(err_not_found("Absolute path expected".to_owned()))
         }
     }
 
     // code duplication yay
     fn resolve_path_to_block_chain(&self, path: &Path) -> Result<&PackBlockChain> {
         if let Ok(path) = path.strip_prefix("/") {
-            self.resolve_path_to_block_chain_at(&self.blockchains[&PK2_ROOT_BLOCK], path)
+            self.resolve_path_to_block_chain_index_at(PK2_ROOT_BLOCK, path)
+                .map(|idx| &self.blockchains[&idx])
         } else {
-            Err(io::Error::new(io::ErrorKind::NotFound, "Absolute path expected"))
+            Err(err_not_found("Absolute path expected".to_owned()))
         }
     }
 
-    pub(crate) fn resolve_path_to_entry_at<'a>(
-        &'a self,
-        current_chain: &'a PackBlockChain,
+    pub(crate) fn resolve_path_to_entry_at(
+        &self,
+        current_chain: u64,
         path: &Path,
-    ) -> Result<&'a PackEntry> {
+    ) -> Result<(u64, usize, &PackEntry)> {
         let mut components = path.components();
         let name = component_to_str(components.next_back().unwrap()); // todo remove unwrap
-        self.resolve_path_to_block_chain_at(current_chain, components.as_path())?
+        let chain =
+            self.resolve_path_to_block_chain_index_at(current_chain, components.as_path())?;
+        let (idx, entry) = &self.blockchains[&chain]
             .into_iter()
-            .find(|entry| entry.name() == name)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    ["Unable to find file ", name.unwrap()].join(""),
-                )
-            })
+            .enumerate()
+            .find(|(_, entry)| entry.name() == name)
+            .ok_or_else(|| err_not_found(["Unable to find file ", name.unwrap()].join("")))?;
+        Ok((chain, *idx, entry))
     }
 
-    pub(crate) fn resolve_path_to_block_chain_at<'a>(
-        &'a self,
-        mut current_chain: &'a PackBlockChain,
-        path: &Path,
-    ) -> Result<&'a PackBlockChain> {
-        for component in path.components() {
-            let p = component_to_str(component).unwrap();
-            current_chain = self.find_blockchain_in_blockchain(current_chain, p)?;
-        }
-        Ok(current_chain)
-    }
-
-    fn find_blockchain_in_blockchain(
+    pub(crate) fn resolve_path_to_block_chain_index_at(
         &self,
-        chain: &PackBlockChain,
-        folder: &str,
-    ) -> Result<&PackBlockChain> {
+        current_chain: u64,
+        path: &Path,
+    ) -> Result<u64> {
+        path.components().try_fold(current_chain, |idx, component| {
+            self.find_block_chain_index_in(
+                &self.blockchains[&idx],
+                component_to_str(component).unwrap(),
+            )
+        })
+    }
+
+    fn find_block_chain_index_in(&self, chain: &PackBlockChain, folder: &str) -> Result<u64> {
         for entry in chain {
-            if let PackEntry::Folder {
-                ref name,
-                pos_children,
-                ..
-            } = entry
-            {
-                if name == folder {
-                    return Ok(&self.blockchains[pos_children]);
-                }
+            match entry {
+                PackEntry::Folder {
+                    name, pos_children, ..
+                } if name == folder => return Ok(*pos_children),
+                _ => (),
             }
         }
-        Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            ["Unable to find folder ", folder].join(""),
-        ))
+        Err(err_not_found(["Unable to find folder ", folder].join("")))
     }
 }
 
@@ -236,13 +208,14 @@ impl Archive {
     }*/
 
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<File> {
-        let entry = self.resolve_path_to_entry(path.as_ref())?;
+        let (_, _, entry) = self.resolve_path_to_entry(path.as_ref())?;
         Ok(File::new(self, entry))
     }
-    /*
+
     pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> Result<FileMut> {
-        unimplemented!()
-    }*/
+        let (chain, block, _) = self.resolve_path_to_entry(path.as_ref())?;
+        Ok(FileMut::new(self, chain, block))
+    }
     /*
         pub fn delete_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
             unimplemented!()
@@ -282,4 +255,8 @@ fn gen_final_blowfish_key(key: &[u8]) -> Vec<u8> {
         blowfish_key[i] = key[i] ^ base_key[i];
     }
     blowfish_key
+}
+
+fn err_not_found(msg: String) -> io::Error {
+    io::Error::new(io::ErrorKind::NotFound, msg)
 }

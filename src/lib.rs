@@ -2,7 +2,8 @@
 pub mod archive;
 pub mod fs;
 
-pub(crate) type Blowfish = block_modes::Ecb<blowfish::BlowfishLE, block_modes::block_padding::ZeroPadding>;
+pub(crate) type Blowfish =
+    block_modes::Ecb<blowfish::BlowfishLE, block_modes::block_padding::ZeroPadding>;
 
 #[allow(non_snake_case)]
 #[derive(Clone, Copy, Debug)]
@@ -19,10 +20,12 @@ pub(crate) mod constants {
         b"JoyMax File Manager!\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00";
     pub const PK2_SALT: [u8; 10] = [0x03, 0xF8, 0xE4, 0x44, 0x88, 0x99, 0x3F, 0x64, 0xFE, 0x35];
     pub const PK2_CHECKSUM_STORED: usize = 3;
-    pub const PK2_CHECKSUM: [u8; 16] = *b"Joymax Pak File\0";
+    pub const PK2_CHECKSUM: &[u8; 16] = b"Joymax Pak File\0";
 
     pub const PK2_FILE_ENTRY_SIZE: usize = std::mem::size_of::<RawPackFileEntry>();
-    pub const PK2_FILE_BLOCK_SIZE: usize = std::mem::size_of::<[RawPackFileEntry; 20]>();
+    pub const PK2_FILE_BLOCK_ENTRY_COUNT: usize = 20;
+    pub const PK2_FILE_BLOCK_SIZE: usize =
+        std::mem::size_of::<[RawPackFileEntry; PK2_FILE_BLOCK_ENTRY_COUNT]>();
 
     pub const PK2_ROOT_BLOCK: u64 = std::mem::size_of::<RawPackHeader>() as u64;
 

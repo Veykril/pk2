@@ -28,8 +28,8 @@ impl Default for PackHeader {
 }
 
 impl PackHeader {
-    pub fn new(bf: &mut Blowfish) -> Self {
-        let mut checksum = constants::PK2_CHECKSUM;
+    pub fn new_encrypted(bf: &mut Blowfish) -> Self {
+        let mut checksum = *constants::PK2_CHECKSUM;
         let _ = bf.encrypt_nopad(&mut checksum);
         PackHeader {
             signature: *constants::PK2_SIGNATURE,
