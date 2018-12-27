@@ -11,7 +11,9 @@ use crate::FILETIME;
 #[derivative(Debug)]
 #[derive(Clone)]
 pub enum PackEntry {
-    Empty,
+    Empty {
+        next_chain: Option<NonZeroU64>,
+    },
     Folder {
         name: String,
         #[derivative(Debug = "ignore")]
@@ -39,7 +41,7 @@ pub enum PackEntry {
 
 impl Default for PackEntry {
     fn default() -> Self {
-        PackEntry::Empty
+        PackEntry::Empty { next_chain: None }
     }
 }
 
@@ -63,17 +65,16 @@ impl PackEntry {
     }
 
     pub fn next_chain(&self) -> Option<NonZeroU64> {
-        match self {
-            PackEntry::Empty => None,
-            PackEntry::Folder { next_chain, .. } | PackEntry::File { next_chain, .. } => {
-                *next_chain
-            }
+        match *self {
+            PackEntry::Empty { next_chain }
+            | PackEntry::Folder { next_chain, .. }
+            | PackEntry::File { next_chain, .. } => next_chain,
         }
     }
 
     pub fn set_next_chain(&mut self, nc: u64) {
         match self {
-            PackEntry::Empty => (),
+            PackEntry::Empty { .. } => (),
             PackEntry::Folder {
                 ref mut next_chain, ..
             }
@@ -85,14 +86,14 @@ impl PackEntry {
 
     pub fn name(&self) -> Option<&str> {
         match self {
-            PackEntry::Empty => None,
+            PackEntry::Empty { .. } => None,
             PackEntry::Folder { name, .. } | PackEntry::File { name, .. } => Some(name),
         }
     }
 
     pub fn is_empty(&self) -> bool {
         match self {
-            PackEntry::Empty => true,
+            PackEntry::Empty { .. } => true,
             _ => false,
         }
     }
@@ -104,7 +105,7 @@ impl PackEntry {
         match r.read_u8()? {
             0 => {
                 r.read_exact(&mut [0; PK2_FILE_ENTRY_SIZE - 1])?; //seek to end of entry
-                Ok(PackEntry::Empty)
+                Ok(PackEntry::Empty { next_chain: None })
             }
             ty @ 1 | ty @ 2 => {
                 let name = {
@@ -165,7 +166,10 @@ impl PackEntry {
 
     pub fn to_writer<W: Write>(&self, mut w: W) -> Result<()> {
         match self {
-            PackEntry::Empty => w.write_all(&[0; PK2_FILE_ENTRY_SIZE]),
+            PackEntry::Empty { next_chain } => {
+                w.write_all(&[0; PK2_FILE_ENTRY_SIZE - 8])?;
+                w.write_u64::<LE>(next_chain.map_or(0, |nc| nc.get()))
+            }
             PackEntry::Folder {
                 name,
                 access_time,
@@ -197,7 +201,7 @@ impl PackEntry {
                 w.write_u32::<LE>(match self {
                     PackEntry::Folder { .. } => 0,
                     PackEntry::File { size, .. } => *size,
-                    PackEntry::Empty => unreachable!(),
+                    _ => unreachable!(),
                 })?;
                 w.write_u64::<LE>(next_chain.map_or(0, |nc| nc.get()))?;
                 Ok(())
