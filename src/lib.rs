@@ -5,6 +5,7 @@ extern crate derivative;
 pub mod archive;
 pub mod fs;
 
+pub(crate) type PackIndex = (u64, usize);
 pub(crate) type Blowfish =
     block_modes::Ecb<blowfish::BlowfishLE, block_modes::block_padding::ZeroPadding>;
 

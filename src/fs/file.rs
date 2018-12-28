@@ -2,6 +2,8 @@ use std::io::{self, Read, Result, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::archive::{Archive, PackEntry};
+use crate::PackIndex;
+use core::ops;
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -9,8 +11,8 @@ use crate::archive::{Archive, PackEntry};
 pub struct File<'a> {
     #[derivative(Debug = "ignore")]
     archive: &'a Archive,
-    entry: &'a PackEntry,
-    pos: u64, //internal seek
+    chain: PackIndex,
+    pos: u64,
 }
 
 impl<'a> File<'a> {
@@ -18,20 +20,22 @@ impl<'a> File<'a> {
         archive.open_file(path)
     }
 
-    pub(crate) fn new(archive: &'a Archive, entry: &'a PackEntry) -> Self {
-        match entry {
-            PackEntry::File { .. } => File {
-                archive,
-                entry,
-                pos: 0,
-            },
-            _ => panic!("tried constructing file object with wrong PackEntry"),
+    pub(crate) fn new(archive: &'a Archive, chain: PackIndex) -> Self {
+        File {
+            archive,
+            chain,
+            pos: 0,
         }
     }
 
     #[inline]
+    fn entry(&self) -> &PackEntry {
+        &self.archive.blockchains[&self.chain.0][self.chain.1]
+    }
+
+    #[inline]
     pub fn name(&self) -> &str {
-        match self.entry {
+        match self.entry() {
             PackEntry::File { name, .. } => name,
             _ => unreachable!(),
         }
@@ -39,7 +43,7 @@ impl<'a> File<'a> {
 
     #[inline]
     fn pos_data_and_size(&self) -> (u64, u32) {
-        match *self.entry {
+        match *self.entry() {
             PackEntry::File { pos_data, size, .. } => (pos_data, size),
             _ => unreachable!(),
         }
@@ -90,12 +94,13 @@ impl Seek for File<'_> {
     }
 }
 
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct FileMut<'a> {
+    #[derivative(Debug = "ignore")]
     archive: &'a mut Archive,
-    /// we cannot have access to a `&'a mut PackEntry` here because we would mutably alias it with the archive refernce then
-    map_index: u64,
-    block_chain_index: usize,
-    pos: u64, //internal seek
+    chain: PackIndex,
+    pos: u64,
 }
 
 impl<'a> FileMut<'a> {
@@ -103,45 +108,17 @@ impl<'a> FileMut<'a> {
         archive.open_file_mut(path)
     }
 
-    pub(crate) fn new(archive: &'a mut Archive, map_index: u64, block_chain_index: usize) -> Self {
+    pub(crate) fn new(archive: &'a mut Archive, chain: PackIndex) -> Self {
         FileMut {
             archive,
-            map_index,
-            block_chain_index,
+            chain,
             pos: 0,
         }
     }
 
-    fn to_immutable(&self) -> File {
-        File {
-            archive: self.archive,
-            entry: self.entry(),
-            pos: self.pos,
-        }
-    }
-
-    fn entry(&self) -> &PackEntry {
-        &self.archive.blockchains[&self.map_index][self.block_chain_index]
-    }
-
+    #[inline]
     fn entry_mut(&mut self) -> &mut PackEntry {
-        &mut self.archive.blockchains.get_mut(&self.map_index).unwrap()[self.block_chain_index]
-    }
-}
-
-impl Read for FileMut<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let mut this = self.to_immutable();
-        let n = this.read(buf)?;
-        self.pos = this.pos;
-        Ok(n)
-    }
-}
-
-impl Seek for FileMut<'_> {
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
-        self.pos = self.to_immutable().seek(pos)?;
-        Ok(self.pos)
+        &mut self.archive.blockchains.get_mut(&self.chain.0).unwrap()[self.chain.1]
     }
 }
 
@@ -168,5 +145,19 @@ impl Write for FileMut<'_> {
 
     fn flush(&mut self) -> Result<()> {
         self.archive.file.borrow_mut().flush()
+    }
+}
+
+impl<'a> ops::Deref for FileMut<'a> {
+    type Target = File<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*(self as *const _ as *const File) }
+    }
+}
+
+impl<'a> ops::DerefMut for FileMut<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *(self as *mut _ as *mut File) }
     }
 }

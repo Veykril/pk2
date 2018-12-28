@@ -19,6 +19,7 @@ mod header;
 pub(crate) use self::block_chain::{PackBlock, PackBlockChain};
 pub(crate) use self::entry::PackEntry;
 pub(crate) use self::header::PackHeader;
+use crate::PackIndex;
 
 pub struct Archive {
     header: PackHeader,
@@ -140,45 +141,29 @@ impl Archive {
 }
 
 impl Archive {
-    fn resolve_path_to_entry(&self, path: &Path) -> Result<(u64, usize, &PackEntry)> {
-        if let Ok(path) = path.strip_prefix("/") {
-            self.resolve_path_to_entry_at(PK2_ROOT_BLOCK, path)
-        } else {
-            Err(err_not_found("Absolute path expected".to_owned()))
-        }
-    }
-
-    // code duplication yay
-    fn resolve_path_to_block_chain(&self, path: &Path) -> Result<&PackBlockChain> {
-        if let Ok(path) = path.strip_prefix("/") {
-            self.resolve_path_to_block_chain_index_at(PK2_ROOT_BLOCK, path)
-                .map(|idx| &self.blockchains[&idx])
-        } else {
-            Err(err_not_found("Absolute path expected".to_owned()))
-        }
-    }
-
-    pub(crate) fn resolve_path_to_entry_at(
+    /// Resolves a path from the specified chain to a parent chain ,entry index and the entry
+    pub(crate) fn resolve_path_to_entry_and_parent(
         &self,
         current_chain: u64,
         path: &Path,
-    ) -> Result<(u64, usize, &PackEntry)> {
+    ) -> Result<Option<(PackIndex, &PackEntry)>> {
         let mut components = path.components();
         if let Some(c) = components.next_back() {
-            let name = component_to_str(c); // todo remove unwrap
-            let chain =
+            let name = component_to_str(c);
+            let parent =
                 self.resolve_path_to_block_chain_index_at(current_chain, components.as_path())?;
-            let (idx, entry) = self.blockchains[&chain]
+            let (parent_idx, chain) = self.blockchains[&parent]
                 .iter()
                 .enumerate()
                 .find(|(_, entry)| entry.name() == name)
                 .ok_or_else(|| err_not_found(["Unable to find file ", name.unwrap()].join("")))?;
-            Ok((chain, idx, entry))
+            Ok(Some(((parent, parent_idx), chain)))
         } else {
-            panic!("cant implement root as a dir");
+            Ok(None)
         }
     }
 
+    /// Resolves a path to a [`PackBlockChain`] index starting from the given chain
     pub(crate) fn resolve_path_to_block_chain_index_at(
         &self,
         current_chain: u64,
@@ -192,6 +177,8 @@ impl Archive {
         })
     }
 
+    /// Looks up the `folder` name in the specified [`PackBlockChain`], returning the index of the
+    /// ['PackBlockChain'] corresponding to the folder if successful.
     fn find_block_chain_index_in(&self, chain: &PackBlockChain, folder: &str) -> Result<u64> {
         for entry in chain.iter() {
             return match entry {
@@ -209,7 +196,7 @@ impl Archive {
             ["Unable to find directory ", folder].join(""),
         ))
     }
-
+    /*
     fn create_entry_at(&mut self, mut chain: u64, path: &Path) -> Result<(u64, usize)> {
         let mut components = path.components().peekable();
         // check how far of the path exists
@@ -281,7 +268,7 @@ impl Archive {
             io::ErrorKind::AlreadyExists,
             "Path already exists",
         ))
-    }
+    }*/
 
     fn create_new_block_at(&mut self, offset: u64) -> Result<PackBlock> {
         let mut buf = [0; PK2_FILE_BLOCK_SIZE];
@@ -300,24 +287,29 @@ impl Archive {
 }
 
 impl Archive {
-    pub fn create_file<P: AsRef<Path>>(&mut self, path: P, size: u32) -> Result<FileMut> {
-        if let Ok(path) = path.as_ref().strip_prefix("/") {
-            self.create_entry_at(PK2_ROOT_BLOCK, path.as_ref())?;
+    /*
+        pub fn create_file<P: AsRef<Path>>(&mut self, path: P, size: u32) -> Result<FileMut> {
+            if let Ok(path) = path.as_ref().strip_prefix("/") {
+                self.create_entry_at(PK2_ROOT_BLOCK, path.as_ref())?;
 
-            unimplemented!()
-        } else {
-            Err(err_not_found("Absolute path expected".to_owned()))
+                unimplemented!()
+            } else {
+                Err(err_not_found("Absolute path expected".to_owned()))
+            }
         }
-    }
-
+    */
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<File> {
-        let (_, _, entry) = self.resolve_path_to_entry(path.as_ref())?;
-        Ok(File::new(self, entry))
+        let (parent, _) = self
+            .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)?
+            .unwrap();
+        Ok(File::new(self, parent))
     }
 
     pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> Result<FileMut> {
-        let (chain, block, _) = self.resolve_path_to_entry(path.as_ref())?;
-        Ok(FileMut::new(self, chain, block))
+        let (parent, _) = self
+            .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)?
+            .unwrap();
+        Ok(FileMut::new(self, parent))
     }
     /*
         pub fn delete_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
@@ -330,12 +322,13 @@ impl Archive {
     */
 
     pub fn open_dir<P: AsRef<Path>>(&self, path: P) -> Result<Directory> {
-        let (_, _, entry) = self.resolve_path_to_entry(path.as_ref())?;
-        Ok(Directory::new(
-            self,
-            entry,
-            &self.blockchains[&entry.pos_children().unwrap()],
-        ))
+        let (chain, parent) = match self
+            .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)?
+        {
+            Some((parent, entry)) => (entry.pos_children().unwrap(), Some(parent)),
+            None => (PK2_ROOT_BLOCK, None),
+        };
+        Ok(Directory::new(self, chain, parent))
     }
 
     /*
@@ -368,4 +361,9 @@ fn gen_final_blowfish_key(key: &[u8]) -> Vec<u8> {
 
 fn err_not_found(msg: String) -> io::Error {
     io::Error::new(io::ErrorKind::NotFound, msg)
+}
+
+fn check_root(path: &Path) -> Result<&Path> {
+    path.strip_prefix("/")
+        .map_err(|_| err_not_found("Absolute path expected".to_owned()))
 }

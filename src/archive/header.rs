@@ -28,7 +28,7 @@ impl Default for PackHeader {
 }
 
 impl PackHeader {
-    pub fn new_encrypted(bf: &mut Blowfish) -> Self {
+    pub(crate) fn new_encrypted(bf: &mut Blowfish) -> Self {
         let mut checksum = *constants::PK2_CHECKSUM;
         let _ = bf.encrypt_nopad(&mut checksum);
         PackHeader {
@@ -40,7 +40,7 @@ impl PackHeader {
         }
     }
 
-    pub fn from_reader<R: Read>(mut r: R) -> Result<Self> {
+    pub(crate) fn from_reader<R: Read>(mut r: R) -> Result<Self> {
         let mut signature = [0; 30];
         r.read_exact(&mut signature)?;
         let version = r.read_u32::<LE>()?;
@@ -58,7 +58,7 @@ impl PackHeader {
         })
     }
 
-    pub fn to_writer<W: Write>(&self, mut w: W) -> Result<()> {
+    pub(crate) fn to_writer<W: Write>(&self, mut w: W) -> Result<()> {
         w.write_all(&self.signature)?;
         w.write_u32::<LE>(self.version)?;
         w.write_u8(self.encrypted as u8)?;
