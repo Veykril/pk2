@@ -2,9 +2,8 @@ use std::io::Result;
 use std::path::Path;
 
 use crate::archive::PackEntry;
-use crate::archive::{Archive, PackBlockChain};
+use crate::archive::{PackBlockChain, Pk2};
 use crate::fs::file::File;
-use crate::fs::file::FileMut;
 use crate::PackIndex;
 use core::ops;
 use std::path::PathBuf;
@@ -13,13 +12,13 @@ use std::path::PathBuf;
 #[derivative(Copy, Clone, Debug)]
 pub struct Directory<'a> {
     #[derivative(Debug = "ignore")]
-    archive: &'a Archive,
+    archive: &'a Pk2,
     parent: Option<PackIndex>,
     chain: u64,
 }
 
 impl<'a> Directory<'a> {
-    pub fn new(archive: &'a Archive, chain: u64, parent: Option<PackIndex>) -> Self {
+    pub fn new(archive: &'a Pk2, chain: u64, parent: Option<PackIndex>) -> Self {
         Directory {
             archive,
             chain,
@@ -34,12 +33,12 @@ impl<'a> Directory<'a> {
 
     #[inline]
     fn chain(&self) -> &PackBlockChain {
-        &self.archive.blockchains[&self.chain]
+        &self.archive.block_mgr.chains[&self.chain]
     }
 
     #[inline]
     fn parent_chain(&self) -> Option<&PackBlockChain> {
-        Some(&self.archive.blockchains[&self.parent?.0])
+        Some(&self.archive.block_mgr.chains[&self.parent?.0])
     }
 
     pub fn name(&self) -> &str {
@@ -53,6 +52,7 @@ impl<'a> Directory<'a> {
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<File> {
         match self
             .archive
+            .block_mgr
             .resolve_path_to_entry_and_parent(self.chain().blocks[0].offset, path.as_ref())?
         {
             Some((parent, _)) => Ok(File::new(self.archive, parent)),
@@ -63,6 +63,7 @@ impl<'a> Directory<'a> {
     pub fn open_dir<P: AsRef<Path>>(&self, path: P) -> Result<Directory> {
         match self
             .archive
+            .block_mgr
             .resolve_path_to_entry_and_parent(self.chain().blocks[0].offset, path.as_ref())?
         {
             Some((parent, entry)) => Ok(Directory::new(
@@ -101,65 +102,5 @@ impl<'a> Directory<'a> {
                 },
                 _ => None,
             })
-    }
-}
-
-#[derive(Derivative)]
-#[derivative(Debug)]
-pub struct DirectoryMut<'a> {
-    #[derivative(Debug = "ignore")]
-    archive: &'a mut Archive,
-    parent: Option<PackIndex>,
-    chain: u64,
-}
-
-impl<'a> DirectoryMut<'a> {
-    pub fn new(archive: &'a mut Archive, chain: u64, parent: Option<PackIndex>) -> Self {
-        DirectoryMut {
-            archive,
-            chain,
-            parent,
-        }
-    }
-
-    pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> Result<FileMut> {
-        match self
-            .archive
-            .resolve_path_to_entry_and_parent(self.chain().blocks[0].offset, path.as_ref())?
-        {
-            Some((parent, _)) => Ok(FileMut::new(self.archive, parent)),
-            None => unreachable!(),
-        }
-    }
-
-    pub fn open_dir_mut<P: AsRef<Path>>(&mut self, path: P) -> Result<DirectoryMut> {
-        match self
-            .archive
-            .resolve_path_to_entry_and_parent(self.chain().blocks[0].offset, path.as_ref())?
-        {
-            Some((parent, entry)) => Ok(DirectoryMut::new(
-                self.archive,
-                entry.pos_children().unwrap(),
-                Some(parent),
-            )),
-            None => unreachable!(),
-        }
-    }
-
-    // files_mut is not possible to implement safely due to it exposing mutable aliasing
-    // gotta rethink this once more
-}
-
-impl<'a> ops::Deref for DirectoryMut<'a> {
-    type Target = Directory<'a>;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*(self as *const _ as *const Directory) }
-    }
-}
-
-impl<'a> ops::DerefMut for DirectoryMut<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *(self as *mut _ as *mut Directory) }
     }
 }

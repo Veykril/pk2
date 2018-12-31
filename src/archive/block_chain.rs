@@ -2,7 +2,9 @@ use std::io::{Read, Result, Write};
 use std::ops;
 
 use crate::archive::entry::PackEntry;
+use crate::archive::err_not_found;
 use crate::constants::PK2_FILE_BLOCK_ENTRY_COUNT;
+use std::io;
 
 #[derive(Debug)]
 pub struct PackBlockChain {
@@ -14,6 +16,23 @@ impl PackBlockChain {
         PackBlockChain { blocks }
     }
 
+    pub fn offset(&self) -> u64 {
+        self.blocks[0].offset
+    }
+
+    pub fn get_file_offset_for_entry(&self, idx: usize) -> Option<u64> {
+        Some(
+            self.blocks.get(idx / PK2_FILE_BLOCK_ENTRY_COUNT)?.offset
+                + (idx % PK2_FILE_BLOCK_ENTRY_COUNT) as u64,
+        )
+    }
+
+    pub fn find_first_empty_mut(&mut self) -> Option<(usize, &mut PackEntry)> {
+        self.iter_mut()
+            .enumerate()
+            .find(|(_, entry)| entry.is_empty())
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &'_ PackEntry> + '_ {
         self.blocks.iter().flat_map(|blocks| &blocks.entries)
     }
@@ -22,6 +41,26 @@ impl PackBlockChain {
         self.blocks
             .iter_mut()
             .flat_map(|blocks| &mut blocks.entries)
+    }
+
+    /// Looks up the `folder` name in the specified [`PackBlockChain`], returning the index of the
+    /// ['PackBlockChain'] corresponding to the folder if successful.
+    pub fn find_block_chain_index_in(&self, folder: &str) -> Result<u64> {
+        for entry in self.iter() {
+            return match entry {
+                PackEntry::Folder {
+                    name, pos_children, ..
+                } if name == folder => Ok(*pos_children),
+                PackEntry::File { name, .. } if name == folder => Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Expected a directory, found a file",
+                )),
+                _ => continue,
+            };
+        }
+        Err(err_not_found(
+            ["Unable to find directory ", folder].join(""),
+        ))
     }
 }
 
@@ -39,7 +78,7 @@ impl ops::IndexMut<usize> for PackBlockChain {
 }
 
 #[derive(Derivative)]
-#[derivative(Debug)]
+#[derivative(Debug, Default)]
 pub struct PackBlock {
     pub offset: u64,
     #[derivative(Debug = "ignore")]

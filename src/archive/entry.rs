@@ -57,6 +57,23 @@ impl PackEntry {
         }
     }
 
+    pub fn new_file(
+        name: String,
+        pos_data: u64,
+        size: u32,
+        next_chain: Option<NonZeroU64>,
+    ) -> Self {
+        PackEntry::File {
+            name,
+            access_time: Default::default(),
+            create_time: Default::default(),
+            modify_time: Default::default(),
+            pos_data,
+            size,
+            next_chain,
+        }
+    }
+
     pub fn pos_children(&self) -> Option<u64> {
         match *self {
             PackEntry::Folder { pos_children, .. } => Some(pos_children),

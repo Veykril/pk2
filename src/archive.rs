@@ -4,31 +4,33 @@ use hashbrown::HashMap;
 use std::cell::RefCell;
 use std::fs::File as StdFile;
 use std::io::{self, Cursor, Read, Result, Seek, SeekFrom, Write};
+use std::iter::Peekable;
+use std::path::Components;
 use std::path::{Component, Path};
 
 use crate::constants::*;
-use crate::fs::{Directory, File, FileMut};
+use crate::fs::{Directory, File};
 use crate::Blowfish;
 
-//pub mod pack_block;
 mod block_chain;
+mod block_manager;
 mod entry;
 mod header;
 
-//use self::pack_block::PackBlock;
 pub(crate) use self::block_chain::{PackBlock, PackBlockChain};
+pub(crate) use self::block_manager::BlockManager;
 pub(crate) use self::entry::PackEntry;
 pub(crate) use self::header::PackHeader;
 use crate::PackIndex;
 
-pub struct Archive {
+pub struct Pk2 {
     header: PackHeader,
     bf: Blowfish,
-    pub file: RefCell<StdFile>,
-    pub blockchains: HashMap<u64, PackBlockChain>,
+    pub(crate) file: RefCell<StdFile>,
+    pub(crate) block_mgr: BlockManager,
 }
 
-impl Archive {
+impl Pk2 {
     pub fn create<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Result<Self> {
         let mut file = StdFile::create(path)?;
         let mut bf = Blowfish::new_varkey(&gen_final_blowfish_key(key.as_ref())).unwrap();
@@ -44,14 +46,13 @@ impl Archive {
         let _ = bf.encrypt_nopad(&mut buf);
         file.write_all(&buf)?;
 
-        let mut this = Archive {
+        let block_mgr = BlockManager::new(&mut bf, &mut file)?;
+        Ok(Pk2 {
             header,
             bf,
             file: RefCell::new(file),
-            blockchains: HashMap::new(),
-        };
-        this.build_block_index()?;
-        Ok(this)
+            block_mgr,
+        })
     }
 
     pub fn open<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Result<Self> {
@@ -81,236 +82,128 @@ impl Archive {
             }
         }
 
-        let mut this = Archive {
+        let block_mgr = BlockManager::new(&mut bf, &mut file)?;
+        Ok(Pk2 {
             header,
             bf,
             file: RefCell::new(file),
-            blockchains: HashMap::with_capacity(16),
-        };
-
-        this.build_block_index()?;
-
-        Ok(this)
+            block_mgr,
+        })
     }
 
     pub fn header(&self) -> &PackHeader {
         &self.header
     }
-
-    fn build_block_index(&mut self) -> Result<()> {
-        let mut offsets = vec![PK2_ROOT_BLOCK];
-        while let Some(offset) = offsets.pop() {
-            let block = self.read_block_chain_at(offset)?;
-            for block in &block.blocks {
-                for entry in &block.entries {
-                    if let PackEntry::Folder {
-                        name, pos_children, ..
-                    } = entry
-                    {
-                        if name != "." && name != ".." {
-                            offsets.push(*pos_children);
-                        }
-                    }
-                }
-            }
-            self.blockchains.insert(offset, block);
-        }
-        Ok(())
-    }
-
-    fn read_block_chain_at(&mut self, offset: u64) -> Result<PackBlockChain> {
-        let mut offset = offset;
-        let mut buf = [0; PK2_FILE_BLOCK_SIZE];
-        let mut blocks = Vec::new();
-        loop {
-            {
-                let mut file = self.file.borrow_mut();
-                file.seek(SeekFrom::Start(offset))?;
-                file.read_exact(&mut buf)?;
-            }
-            let _ = self.bf.decrypt_nopad(&mut buf);
-            let block = PackBlock::from_reader(Cursor::new(&buf[..]), offset)?;
-            let nc = block[19].next_chain();
-            blocks.push(block);
-            match nc {
-                Some(nc) => offset = nc.get(),
-                None => break Ok(PackBlockChain::new(blocks)),
-            }
-        }
-    }
 }
 
-impl Archive {
-    /// Resolves a path from the specified chain to a parent chain ,entry index and the entry
-    pub(crate) fn resolve_path_to_entry_and_parent(
-        &self,
-        current_chain: u64,
-        path: &Path,
-    ) -> Result<Option<(PackIndex, &PackEntry)>> {
-        let mut components = path.components();
-        if let Some(c) = components.next_back() {
-            let name = component_to_str(c);
-            let parent =
-                self.resolve_path_to_block_chain_index_at(current_chain, components.as_path())?;
-            let (parent_idx, chain) = self.blockchains[&parent]
-                .iter()
-                .enumerate()
-                .find(|(_, entry)| entry.name() == name)
-                .ok_or_else(|| err_not_found(["Unable to find file ", name.unwrap()].join("")))?;
-            Ok(Some(((parent, parent_idx), chain)))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Resolves a path to a [`PackBlockChain`] index starting from the given chain
-    pub(crate) fn resolve_path_to_block_chain_index_at(
-        &self,
-        current_chain: u64,
-        path: &Path,
-    ) -> Result<u64> {
-        path.components().try_fold(current_chain, |idx, component| {
-            self.find_block_chain_index_in(
-                &self.blockchains[&idx],
-                component_to_str(component).unwrap(),
-            )
-        })
-    }
-
-    /// Looks up the `folder` name in the specified [`PackBlockChain`], returning the index of the
-    /// ['PackBlockChain'] corresponding to the folder if successful.
-    fn find_block_chain_index_in(&self, chain: &PackBlockChain, folder: &str) -> Result<u64> {
-        for entry in chain.iter() {
-            return match entry {
-                PackEntry::Folder {
-                    name, pos_children, ..
-                } if name == folder => Ok(*pos_children),
-                PackEntry::File { name, .. } if name == folder => Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Expected a directory, found a file",
-                )),
-                _ => continue,
-            };
-        }
-        Err(err_not_found(
-            ["Unable to find directory ", folder].join(""),
-        ))
-    }
-    /*
-    fn create_entry_at(&mut self, mut chain: u64, path: &Path) -> Result<(u64, usize)> {
-        let mut components = path.components().peekable();
-        // check how far of the path exists
-        while let Some(component) = components.peek() {
-            let name = component_to_str(*component).unwrap();
-            match self.find_block_chain_index_in(&self.blockchains[&chain], name) {
-                Ok(i) => {
-                    chain = i;
-                    let _ = components.next();
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                    if *component == Component::ParentDir {
-                        return Err(io::Error::new(
-                            io::ErrorKind::PermissionDenied,
-                            "The path is a parent of the root directory",
-                        ));
-                    } else {
-                        break;
-                    }
-                }
-                // the current name already exists as a file
-                Err(e) => {
-                    return Err(e);
-                }
-            }
-        }
+impl Pk2 {
+    fn create_entry_at(&mut self, chain: u64, path: &Path) -> Result<(u64, usize)> {
+        let (chain, mut components) = self.block_mgr.validate_dir_path_until(chain, path)?;
+        println!("{:?}", components.clone().collect::<Vec<_>>());
         while let Some(component) = components.next() {
-            let name = component_to_str(component).unwrap();
-            match component {
-                // use inserted indices
-                Component::Normal(p) => {
-                    let opt = self
-                        .blockchains
-                        .get_mut(&chain)
-                        .unwrap()
-                        .iter_mut()
-                        .enumerate()
-                        .find(|(_, entry)| entry.is_empty());
-                    match opt {
-                        Some((idx, entry)) => {
-                            if let Some(c) = components.peek() {
-                                let next_block_offset = self.file.borrow().metadata()?.len();
-                                *entry = PackEntry::new_folder(
-                                    component_to_str(*c).unwrap().to_owned(),
-                                    next_block_offset,
-                                    None,
-                                );
-                                let block = self.create_new_block_at(next_block_offset)?;
-                                self.blockchains
-                                    .insert(next_block_offset, PackBlockChain::new(vec![block]));
-                            } else {
-                                return Ok((chain, idx));
-                            }
-                        }
-                        None => {
-                            let next_block_offset = self.file.borrow().metadata()?.len();
-                            let block = self.create_new_block_at(next_block_offset)?;
-                            let block_chain = self.blockchains.get_mut(&chain).unwrap();
-                            block_chain.blocks.last_mut().unwrap()[PK2_FILE_BLOCK_ENTRY_COUNT - 1]
-                                .set_next_chain(next_block_offset);
-                            block_chain.blocks.push(block);
-                        }
+            let name = component.as_os_str().to_str().unwrap();
+            if let Component::Normal(p) = component {
+                let block_chain = self.block_mgr.chains.get_mut(&chain).unwrap();
+                if let Some((idx, entry)) = block_chain.find_first_empty_mut() {
+                    if let Some(c) = components.peek() {
+                        let next_block_offset = self.file.borrow().metadata()?.len();
+                        *entry = PackEntry::new_folder(
+                            c.as_os_str().to_str().unwrap().to_owned(),
+                            next_block_offset,
+                            entry.next_chain(),
+                        );
+                        let offset = block_chain.get_file_offset_for_entry(idx).unwrap();
+                        Self::write_entry_to_file_at(
+                            &mut *self.file.borrow_mut(),
+                            &mut self.bf,
+                            offset,
+                            &block_chain[idx],
+                        )?;
+                        let block = Self::create_new_block_in_file_at(
+                            &mut *self.file.borrow_mut(),
+                            &mut self.bf,
+                            next_block_offset,
+                        )?;
+                        self.block_mgr
+                            .chains
+                            .insert(next_block_offset, PackBlockChain::new(vec![block]));
+                    } else {
+                        return Ok((block_chain.offset(), idx));
                     }
+                } else {
+                    let next_block_offset = self.file.borrow().metadata()?.len();
+                    let block = Self::create_new_block_in_file_at(
+                        &mut *self.file.borrow_mut(),
+                        &mut self.bf,
+                        next_block_offset,
+                    )?;
+                    block_chain.blocks.last_mut().unwrap()[PK2_FILE_BLOCK_ENTRY_COUNT - 1]
+                        .set_next_chain(next_block_offset);
+                    block_chain.blocks.push(block);
                 }
-                _ => (),
+            } else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{:?} unexpected", component),
+                ));
             }
         }
         Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             "Path already exists",
         ))
-    }*/
+    }
 
-    fn create_new_block_at(&mut self, offset: u64) -> Result<PackBlock> {
+    fn create_new_block_in_file_at<W: Write + Seek>(
+        mut file: W,
+        bf: &mut Blowfish,
+        offset: u64,
+    ) -> Result<PackBlock> {
+        let mut block = PackBlock::default();
+        block.offset = offset;
         let mut buf = [0; PK2_FILE_BLOCK_SIZE];
-        let mut block = PackBlock {
-            offset: 0,
-            entries: Default::default(),
-        };
-        block.to_writer(&mut Cursor::new(&mut buf[..]))?;
-        let _ = self.bf.encrypt_nopad(&mut buf);
-        let mut file = self.file.borrow_mut();
+        block.to_writer(Cursor::new(&mut buf[..]))?;
+        let _ = bf.encrypt_nopad(&mut buf);
         file.seek(SeekFrom::Start(offset))?;
         file.write_all(&buf)?;
-        block.offset = offset;
         Ok(block)
+    }
+
+    fn write_entry_to_file_at<W: Write + Seek>(
+        mut file: W,
+        bf: &mut Blowfish,
+        offset: u64,
+        entry: &PackEntry,
+    ) -> Result<()> {
+        let mut buf = [0; PK2_FILE_ENTRY_SIZE];
+        entry.to_writer(&mut buf[..])?;
+        let _ = bf.encrypt_nopad(&mut buf);
+        file.seek(SeekFrom::Start(offset))?;
+        file.write_all(&buf)
     }
 }
 
-impl Archive {
-    /*
-        pub fn create_file<P: AsRef<Path>>(&mut self, path: P, size: u32) -> Result<FileMut> {
-            if let Ok(path) = path.as_ref().strip_prefix("/") {
-                self.create_entry_at(PK2_ROOT_BLOCK, path.as_ref())?;
+impl Pk2 {
+    pub fn create_file<P: AsRef<Path>>(&mut self, path: P, buf: &[u8]) -> Result<File> {
+        let path = check_root(path.as_ref())?;
+        let (chain_id, entry_idx) = self.create_entry_at(PK2_ROOT_BLOCK, path.parent().unwrap())?;
+        let chain = self.block_mgr.chains.get_mut(&chain_id).unwrap();
+        let entry = &mut chain[entry_idx];
+        let pos_data = self.file.borrow_mut().seek(SeekFrom::End(0))?;
+        assert!(buf.len() < !0u32 as usize);
+        self.file.borrow_mut().write_all(buf)?;
+        *entry = PackEntry::new_file(path.file_name().unwrap().to_str().unwrap().to_owned(), pos_data, buf.len() as u32, entry.next_chain());
+        Ok(File::new(self, (chain_id, entry_idx)))
+    }
 
-                unimplemented!()
-            } else {
-                Err(err_not_found("Absolute path expected".to_owned()))
-            }
-        }
-    */
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<File> {
         let (parent, _) = self
+            .block_mgr
             .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)?
             .unwrap();
         Ok(File::new(self, parent))
     }
 
-    pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> Result<FileMut> {
-        let (parent, _) = self
-            .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)?
-            .unwrap();
-        Ok(FileMut::new(self, parent))
-    }
     /*
         pub fn delete_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
             unimplemented!()
@@ -323,26 +216,13 @@ impl Archive {
 
     pub fn open_dir<P: AsRef<Path>>(&self, path: P) -> Result<Directory> {
         let (chain, parent) = match self
+            .block_mgr
             .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)?
         {
             Some((parent, entry)) => (entry.pos_children().unwrap(), Some(parent)),
             None => (PK2_ROOT_BLOCK, None),
         };
         Ok(Directory::new(self, chain, parent))
-    }
-
-    /*
-    pub fn open_dir_mut<P: AsRef<Path>>(&mut self, path: P) -> Result<DirMut> {
-        unimplemented!()
-    }*/
-}
-
-fn component_to_str(component: Component) -> Option<&str> {
-    match component {
-        Component::Normal(p) => p.to_str(),
-        Component::ParentDir => Some(".."),
-        Component::CurDir => Some("."),
-        _ => None,
     }
 }
 
