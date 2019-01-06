@@ -1,24 +1,13 @@
-use std::io::{self, Read, Result, Seek, SeekFrom, Write};
+use std::io::{self, Read, Result, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::archive::{PackEntry, Pk2};
-use crate::PackIndex;
-use core::ops;
 
-macro_rules! borrow_entry {
-    ($_self:ident) => {
-        &$_self.archive.block_mgr.borrow().chains[&$_self.chain.0][$_self.chain.1]
-    };
-}
-
-#[derive(Derivative)]
-#[derivative(Debug)]
 #[derive(Copy, Clone)]
 pub struct File<'a> {
-    #[derivative(Debug = "ignore")]
     archive: &'a Pk2,
-    chain: PackIndex,
-    pos: u64,
+    entry: &'a PackEntry,
+    seek_pos: u64,
 }
 
 impl<'a> File<'a> {
@@ -26,22 +15,17 @@ impl<'a> File<'a> {
         archive.open_file(path)
     }
 
-    pub(crate) fn new(archive: &'a Pk2, chain: PackIndex) -> Self {
+    pub(in crate) fn new(archive: &'a Pk2, entry: &'a PackEntry) -> Self {
         File {
             archive,
-            chain,
-            pos: 0,
+            entry,
+            seek_pos: 0,
         }
     }
 
     #[inline]
-    fn entry(&self) -> &PackEntry {
-        &self.archive.block_mgr.chains[&self.chain.0][self.chain.1]
-    }
-
-    #[inline]
     pub fn name(&self) -> &str {
-        match self.entry() {
+        match self.entry {
             PackEntry::File { name, .. } => name,
             _ => unreachable!(),
         }
@@ -53,7 +37,7 @@ impl<'a> File<'a> {
 
     #[inline]
     fn pos_data_and_size(&self) -> (u64, u32) {
-        match *self.entry() {
+        match *self.entry {
             PackEntry::File { pos_data, size, .. } => (pos_data, size),
             _ => unreachable!(),
         }
@@ -69,8 +53,8 @@ impl Read for File<'_> {
             let (pos_data, size) = self.pos_data_and_size();
             let n = match self.archive.file.borrow_mut() {
                 mut file => {
-                    file.seek(SeekFrom::Start(pos_data + self.pos))?;
-                    let len = (size as usize - self.pos as usize).min(buf.len());
+                    file.seek(SeekFrom::Start(pos_data + self.seek_pos))?;
+                    let len = (size as usize - self.seek_pos as usize).min(buf.len());
                     file.read(&mut buf[..len])?
                 }
             };
@@ -85,11 +69,11 @@ impl Seek for File<'_> {
         let size = self.pos_data_and_size().1 as u64;
         let (base_pos, offset) = match pos {
             SeekFrom::Start(n) => {
-                self.pos = n.min(size);
+                self.seek_pos = n.min(size);
                 return Ok(n);
             }
             SeekFrom::End(n) => (size, n),
-            SeekFrom::Current(n) => (self.pos, n),
+            SeekFrom::Current(n) => (self.seek_pos, n),
         };
         let new_pos = base_pos as i64 + offset;
         if new_pos < 0 || new_pos > size as i64 {
@@ -98,12 +82,12 @@ impl Seek for File<'_> {
                 "invalid seek to a negative or size overflowing position",
             ))
         } else {
-            self.pos = new_pos as u64;
-            Ok(self.pos)
+            self.seek_pos = new_pos as u64;
+            Ok(self.seek_pos)
         }
     }
 }
-
+/*
 impl Write for File<'_> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         if buf.is_empty() {
@@ -126,3 +110,4 @@ impl Write for File<'_> {
         self.archive.file.borrow_mut().flush()
     }
 }
+*/

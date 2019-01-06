@@ -5,8 +5,7 @@ extern crate derivative;
 pub mod archive;
 pub mod fs;
 
-pub(crate) type PackIndex = (u64, usize);
-pub(crate) type Blowfish =
+pub(in crate) type Blowfish =
     block_modes::Ecb<blowfish::BlowfishLE, block_modes::block_padding::ZeroPadding>;
 
 #[allow(non_snake_case)]
@@ -16,7 +15,7 @@ pub struct FILETIME {
     dwHighDateTime: u32,
 }
 
-pub(crate) mod constants {
+pub(in crate) mod constants {
     use crate::FILETIME;
 
     pub const PK2_VERSION: u32 = 0x0100_0002;
@@ -44,12 +43,12 @@ pub(crate) mod constants {
 
     #[repr(packed)]
     pub struct RawPackFileEntry {
-        pub ty: u8, //0 = Empty, 1 = Folder, 2  = File
+        pub ty: u8, //0 = Empty, 1 = Directory, 2  = File
         pub name: [u8; 81],
         pub access: FILETIME,
         pub create: FILETIME,
         pub modify: FILETIME,
-        pub position: u64, // Position of data for files, position of children for folders
+        pub position: u64, // Position of data for files, position of children for directorys
         pub size: u32,
         pub next_chain: u64,
         pub _padding: [u8; 2],

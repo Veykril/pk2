@@ -4,46 +4,30 @@ use std::path::Path;
 use crate::archive::PackEntry;
 use crate::archive::{PackBlockChain, Pk2};
 use crate::fs::file::File;
-use crate::PackIndex;
-use core::ops;
-use std::path::PathBuf;
 
-#[derive(Derivative)]
-#[derivative(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct Directory<'a> {
-    #[derivative(Debug = "ignore")]
     archive: &'a Pk2,
-    parent: Option<PackIndex>,
-    chain: u64,
+    entry: Option<&'a PackEntry>,
+    block_chain: &'a PackBlockChain,
 }
 
 impl<'a> Directory<'a> {
-    pub fn new(archive: &'a Pk2, chain: u64, parent: Option<PackIndex>) -> Self {
+    pub fn new(
+        archive: &'a Pk2,
+        block_chain: &'a PackBlockChain,
+        entry: Option<&'a PackEntry>,
+    ) -> Self {
         Directory {
             archive,
-            chain,
-            parent,
+            entry,
+            block_chain,
         }
     }
 
-    #[inline]
-    fn entry(&self) -> Option<&PackEntry> {
-        Some(&self.parent_chain()?[self.parent.unwrap().1])
-    }
-
-    #[inline]
-    fn chain(&self) -> &PackBlockChain {
-        &self.archive.block_mgr.chains[&self.chain]
-    }
-
-    #[inline]
-    fn parent_chain(&self) -> Option<&PackBlockChain> {
-        Some(&self.archive.block_mgr.chains[&self.parent?.0])
-    }
-
     pub fn name(&self) -> &str {
-        match self.entry() {
-            Some(PackEntry::Folder { name, .. }) => &**name,
+        match self.entry {
+            Some(PackEntry::Directory { name, .. }) => &**name,
             None => "/",
             _ => unreachable!(),
         }
@@ -53,51 +37,45 @@ impl<'a> Directory<'a> {
         match self
             .archive
             .block_mgr
-            .resolve_path_to_entry_and_parent(self.chain().blocks[0].offset, path.as_ref())?
+            .resolve_path_to_entry_and_parent(self.block_chain.offset(), path.as_ref())?
         {
-            Some((parent, _)) => Ok(File::new(self.archive, parent)),
+            Some((_, e)) => Ok(File::new(self.archive, e)),
             None => unreachable!(),
         }
     }
 
     pub fn open_dir<P: AsRef<Path>>(&self, path: P) -> Result<Directory> {
-        match self
+        let (parent, entry) = self
             .archive
             .block_mgr
-            .resolve_path_to_entry_and_parent(self.chain().blocks[0].offset, path.as_ref())?
-        {
-            Some((parent, entry)) => Ok(Directory::new(
-                self.archive,
-                entry.pos_children().unwrap(),
-                Some(parent),
-            )),
-            None => unreachable!(),
-        }
+            .resolve_path_to_entry_and_parent(self.block_chain.offset(), path.as_ref())?
+            .unwrap();
+        Ok(Directory::new(self.archive, parent, Some(entry)))
     }
 
     pub fn files(&self) -> impl Iterator<Item = File> {
-        self.chain()
+        self.block_chain
             .iter()
-            .enumerate()
-            .filter_map(move |(idx, entry)| match entry {
-                PackEntry::File { .. } => Some(File::new(self.archive, (self.chain, idx))),
+            .filter_map(move |entry| match entry {
+                PackEntry::File { .. } => Some(File::new(self.archive, entry)),
                 _ => None,
             })
     }
 
     pub fn directories(&self) -> impl Iterator<Item = Directory> {
-        self.chain()
+        self.block_chain
             .iter()
-            .enumerate()
-            .filter_map(move |(idx, entry)| match entry {
-                PackEntry::Folder {
-                    pos_children, name, ..
+            .filter_map(move |entry| match entry {
+                PackEntry::Directory {
+                    ref pos_children,
+                    name,
+                    ..
                 } => match &**name {
                     "." | ".." => None,
                     _ => Some(Directory::new(
                         self.archive,
-                        *pos_children,
-                        Some((self.chain, idx)),
+                        &self.archive.block_mgr.chains[pos_children],
+                        Some(entry),
                     )),
                 },
                 _ => None,

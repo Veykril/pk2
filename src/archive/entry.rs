@@ -14,7 +14,7 @@ pub enum PackEntry {
     Empty {
         next_chain: Option<NonZeroU64>,
     },
-    Folder {
+    Directory {
         name: String,
         #[derivative(Debug = "ignore")]
         access_time: FILETIME,
@@ -46,8 +46,8 @@ impl Default for PackEntry {
 }
 
 impl PackEntry {
-    pub fn new_folder(name: String, pos_children: u64, next_chain: Option<NonZeroU64>) -> Self {
-        PackEntry::Folder {
+    pub fn new_directory(name: String, pos_children: u64, next_chain: Option<NonZeroU64>) -> Self {
+        PackEntry::Directory {
             name,
             access_time: Default::default(),
             create_time: Default::default(),
@@ -76,7 +76,7 @@ impl PackEntry {
 
     pub fn pos_children(&self) -> Option<u64> {
         match *self {
-            PackEntry::Folder { pos_children, .. } => Some(pos_children),
+            PackEntry::Directory { pos_children, .. } => Some(pos_children),
             _ => None,
         }
     }
@@ -84,7 +84,7 @@ impl PackEntry {
     pub fn next_chain(&self) -> Option<NonZeroU64> {
         match *self {
             PackEntry::Empty { next_chain }
-            | PackEntry::Folder { next_chain, .. }
+            | PackEntry::Directory { next_chain, .. }
             | PackEntry::File { next_chain, .. } => next_chain,
         }
     }
@@ -92,7 +92,7 @@ impl PackEntry {
     pub fn set_next_chain(&mut self, nc: u64) {
         match self {
             PackEntry::Empty { .. } => (),
-            PackEntry::Folder {
+            PackEntry::Directory {
                 ref mut next_chain, ..
             }
             | PackEntry::File {
@@ -104,7 +104,7 @@ impl PackEntry {
     pub fn name(&self) -> Option<&str> {
         match self {
             PackEntry::Empty { .. } => None,
-            PackEntry::Folder { name, .. } | PackEntry::File { name, .. } => Some(name),
+            PackEntry::Directory { name, .. } | PackEntry::File { name, .. } => Some(name),
         }
     }
 
@@ -114,11 +114,25 @@ impl PackEntry {
             _ => false,
         }
     }
+
+    pub fn is_file(&self) -> bool {
+        match self {
+            PackEntry::File { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_dir(&self) -> bool {
+        match self {
+            PackEntry::Directory { .. } => true,
+            _ => false,
+        }
+    }
 }
 
 impl PackEntry {
     // Will always seek to the end of the entry
-    pub(crate) fn from_reader<R: Read>(mut r: R) -> Result<Self> {
+    pub(in crate) fn from_reader<R: Read>(mut r: R) -> Result<Self> {
         match r.read_u8()? {
             0 => {
                 r.read_exact(&mut [0; PK2_FILE_ENTRY_SIZE - 1])?; //seek to end of entry
@@ -154,7 +168,7 @@ impl PackEntry {
                 r.read_u16::<LE>()?; //padding
 
                 Ok(if ty == 1 {
-                    PackEntry::Folder {
+                    PackEntry::Directory {
                         name,
                         access_time,
                         create_time,
@@ -174,9 +188,9 @@ impl PackEntry {
                     }
                 })
             }
-            _ => Err(io::Error::new(
+            ty => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Unknown PackFileEntry type",
+                format!("Unknown PackFileEntry type {}", ty),
             )),
         }
     }
@@ -187,7 +201,7 @@ impl PackEntry {
                 w.write_all(&[0; PK2_FILE_ENTRY_SIZE - 8])?;
                 w.write_u64::<LE>(next_chain.map_or(0, |nc| nc.get()))
             }
-            PackEntry::Folder {
+            PackEntry::Directory {
                 name,
                 access_time,
                 create_time,
@@ -204,10 +218,10 @@ impl PackEntry {
                 next_chain,
                 ..
             } => {
+                w.write_u8(if self.is_dir() { 1 } else { 2 })?;
                 let mut encoded = WINDOWS_949.encode(name, EncoderTrap::Strict).unwrap();
-                encoded.resize(80, 0);
+                encoded.resize(81, 0);
                 w.write_all(&encoded)?;
-                w.write_u8(0)?;
                 w.write_u32::<LE>(access_time.dwLowDateTime)?;
                 w.write_u32::<LE>(access_time.dwHighDateTime)?;
                 w.write_u32::<LE>(create_time.dwLowDateTime)?;
@@ -216,11 +230,12 @@ impl PackEntry {
                 w.write_u32::<LE>(modify_time.dwHighDateTime)?;
                 w.write_u64::<LE>(*position)?;
                 w.write_u32::<LE>(match self {
-                    PackEntry::Folder { .. } => 0,
+                    PackEntry::Directory { .. } => 0,
                     PackEntry::File { size, .. } => *size,
                     _ => unreachable!(),
                 })?;
                 w.write_u64::<LE>(next_chain.map_or(0, |nc| nc.get()))?;
+                w.write_u16::<LE>(0)?;
                 Ok(())
             }
         }

@@ -1,15 +1,14 @@
 use block_modes::BlockMode;
-use hashbrown::HashMap;
 
-use std::cell::RefCell;
-use std::fs::File as StdFile;
-use std::io::{self, Cursor, Read, Result, Seek, SeekFrom, Write};
-use std::iter::Peekable;
-use std::path::Components;
-use std::path::{Component, Path};
+use std::{
+    cell::RefCell,
+    fs::{File as StdFile, OpenOptions},
+    io::{self, Cursor, Result, Seek, SeekFrom, Write},
+    path::{Component, Path},
+};
 
 use crate::constants::*;
-use crate::fs::{Directory, File};
+use crate::fs::{Directory, File, FileMut};
 use crate::Blowfish;
 
 mod block_chain;
@@ -17,22 +16,25 @@ mod block_manager;
 mod entry;
 mod header;
 
-pub(crate) use self::block_chain::{PackBlock, PackBlockChain};
-pub(crate) use self::block_manager::BlockManager;
-pub(crate) use self::entry::PackEntry;
-pub(crate) use self::header::PackHeader;
-use crate::PackIndex;
+pub(in crate) use self::block_chain::{PackBlock, PackBlockChain};
+pub(in crate) use self::block_manager::BlockManager;
+pub(in crate) use self::entry::PackEntry;
+pub(in crate) use self::header::PackHeader;
 
 pub struct Pk2 {
     header: PackHeader,
-    bf: Blowfish,
-    pub(crate) file: RefCell<StdFile>,
-    pub(crate) block_mgr: BlockManager,
+    pub(in crate) bf: Blowfish,
+    pub(in crate) file: RefCell<StdFile>,
+    pub(in crate) block_mgr: BlockManager,
 }
 
 impl Pk2 {
     pub fn create<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Result<Self> {
-        let mut file = StdFile::create(path)?;
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .read(true)
+            .open(path.as_ref())?;
         let mut bf = Blowfish::new_varkey(&gen_final_blowfish_key(key.as_ref())).unwrap();
         let header = PackHeader::new_encrypted(&mut bf);
 
@@ -56,7 +58,7 @@ impl Pk2 {
     }
 
     pub fn open<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Result<Self> {
-        let mut file = StdFile::open(path)?;
+        let mut file = OpenOptions::new().write(true).read(true).open(path)?;
         let header = PackHeader::from_reader(&mut file)?;
         if &header.signature != PK2_SIGNATURE {
             Err(io::Error::new(
@@ -97,50 +99,52 @@ impl Pk2 {
 }
 
 impl Pk2 {
-    fn create_entry_at(&mut self, chain: u64, path: &Path) -> Result<(u64, usize)> {
-        let (chain, mut components) = self.block_mgr.validate_dir_path_until(chain, path)?;
-        println!("{:?}", components.clone().collect::<Vec<_>>());
+    // Every line of this function deserves a comment cause it's a mess
+    // This function does not write the entry into the file, it might write needed blocks or entries for the path still
+    // It only makes sure to return a blockchain index and an unused entry index in said blockchain
+    fn create_entry_at(&mut self, mut chain: u64, path: &Path) -> Result<(u64, usize)> {
+        let mut components = path.components().peekable();
         while let Some(component) = components.next() {
-            let name = component.as_os_str().to_str().unwrap();
             if let Component::Normal(p) = component {
                 let block_chain = self.block_mgr.chains.get_mut(&chain).unwrap();
-                if let Some((idx, entry)) = block_chain.find_first_empty_mut() {
-                    if let Some(c) = components.peek() {
-                        let next_block_offset = self.file.borrow().metadata()?.len();
-                        *entry = PackEntry::new_folder(
-                            c.as_os_str().to_str().unwrap().to_owned(),
-                            next_block_offset,
+                let idx = if let Some((idx, entry)) = block_chain.find_first_empty_mut() {
+                    if components.peek().is_some() {
+                        //allocate new blockchain
+                        let mut file = self.file.borrow_mut();
+                        let file_len = file.metadata()?.len();
+                        *entry = PackEntry::new_directory(
+                            p.to_str().unwrap().to_owned(),
+                            file_len,
                             entry.next_chain(),
                         );
                         let offset = block_chain.get_file_offset_for_entry(idx).unwrap();
                         Self::write_entry_to_file_at(
-                            &mut *self.file.borrow_mut(),
+                            &mut *file,
                             &mut self.bf,
                             offset,
                             &block_chain[idx],
                         )?;
-                        let block = Self::create_new_block_in_file_at(
-                            &mut *self.file.borrow_mut(),
-                            &mut self.bf,
-                            next_block_offset,
-                        )?;
+                        let block =
+                            Self::create_new_block_in_file_at(&mut *file, &mut self.bf, file_len)?;
                         self.block_mgr
                             .chains
-                            .insert(next_block_offset, PackBlockChain::new(vec![block]));
+                            .insert(file_len, PackBlockChain::new(vec![block]));
+                        chain = file_len;
+                        continue;
                     } else {
-                        return Ok((block_chain.offset(), idx));
+                        idx
                     }
                 } else {
-                    let next_block_offset = self.file.borrow().metadata()?.len();
-                    let block = Self::create_new_block_in_file_at(
-                        &mut *self.file.borrow_mut(),
-                        &mut self.bf,
-                        next_block_offset,
-                    )?;
-                    block_chain.blocks.last_mut().unwrap()[PK2_FILE_BLOCK_ENTRY_COUNT - 1]
-                        .set_next_chain(next_block_offset);
-                    block_chain.blocks.push(block);
-                }
+                    let mut file = self.file.borrow_mut();
+                    let offset = file.metadata()?.len();
+                    let block =
+                        Self::create_new_block_in_file_at(&mut *file, &mut self.bf, offset)?;
+                    block_chain.as_mut().last_mut().unwrap()[PK2_FILE_BLOCK_ENTRY_COUNT - 1]
+                        .set_next_chain(offset);
+                    block_chain.push(block);
+                    (block_chain.as_ref().len() - 1) * PK2_FILE_BLOCK_ENTRY_COUNT
+                };
+                return Ok((block_chain.offset(), idx));
             } else {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -169,7 +173,7 @@ impl Pk2 {
         Ok(block)
     }
 
-    fn write_entry_to_file_at<W: Write + Seek>(
+    pub(in crate) fn write_entry_to_file_at<W: Write + Seek>(
         mut file: W,
         bf: &mut Blowfish,
         offset: u64,
@@ -181,27 +185,48 @@ impl Pk2 {
         file.seek(SeekFrom::Start(offset))?;
         file.write_all(&buf)
     }
+
+    pub(in crate) fn write_new_data_buffer_to_file(&mut self, data: &[u8]) -> Result<u64> {
+        let mut file = self.file.borrow_mut();
+        let file_end = file.seek(SeekFrom::End(0))?;
+        file.write_all(data)?;
+        Ok(file_end)
+    }
+
+    pub(in crate) fn write_data_buffer_to_file_at(
+        &mut self,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<u64> {
+        let mut file = self.file.borrow_mut();
+        let file_end = file.seek(SeekFrom::Start(offset))?;
+        file.write_all(data)?;
+        Ok(file_end)
+    }
 }
 
 impl Pk2 {
-    pub fn create_file<P: AsRef<Path>>(&mut self, path: P, buf: &[u8]) -> Result<File> {
-        let path = check_root(path.as_ref())?;
-        let (chain_id, entry_idx) = self.create_entry_at(PK2_ROOT_BLOCK, path.parent().unwrap())?;
-        let chain = self.block_mgr.chains.get_mut(&chain_id).unwrap();
-        let entry = &mut chain[entry_idx];
-        let pos_data = self.file.borrow_mut().seek(SeekFrom::End(0))?;
-        assert!(buf.len() < !0u32 as usize);
-        self.file.borrow_mut().write_all(buf)?;
-        *entry = PackEntry::new_file(path.file_name().unwrap().to_str().unwrap().to_owned(), pos_data, buf.len() as u32, entry.next_chain());
-        Ok(File::new(self, (chain_id, entry_idx)))
+    pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> Result<FileMut> {
+        let (chain, path) = self
+            .block_mgr
+            .validate_dir_path_until(PK2_ROOT_BLOCK, check_root(path.as_ref())?)?;
+        let (chain, entry_idx) = self.create_entry_at(chain, path)?;
+        let entry = &mut self.block_mgr.chains.get_mut(&chain).unwrap()[entry_idx];
+        *entry = PackEntry::new_file(
+            path.file_name().unwrap().to_str().unwrap().to_owned(),
+            0,
+            0,
+            entry.next_chain(),
+        );
+        Ok(FileMut::new(self, chain, entry_idx, Vec::new()))
     }
 
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<File> {
-        let (parent, _) = self
+        let (_, entry) = self
             .block_mgr
             .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)?
             .unwrap();
-        Ok(File::new(self, parent))
+        Ok(File::new(self, entry))
     }
 
     /*
@@ -215,14 +240,14 @@ impl Pk2 {
     */
 
     pub fn open_dir<P: AsRef<Path>>(&self, path: P) -> Result<Directory> {
-        let (chain, parent) = match self
+        let (chain, entry) = match self
             .block_mgr
             .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)?
         {
-            Some((parent, entry)) => (entry.pos_children().unwrap(), Some(parent)),
+            Some((_, entry)) => (entry.pos_children().unwrap(), Some(entry)),
             None => (PK2_ROOT_BLOCK, None),
         };
-        Ok(Directory::new(self, chain, parent))
+        Ok(Directory::new(self, &self.block_mgr.chains[&chain], entry))
     }
 }
 

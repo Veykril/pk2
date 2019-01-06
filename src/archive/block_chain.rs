@@ -1,3 +1,4 @@
+use std::convert::{AsMut, AsRef};
 use std::io::{Read, Result, Write};
 use std::ops;
 
@@ -6,14 +7,17 @@ use crate::archive::err_not_found;
 use crate::constants::PK2_FILE_BLOCK_ENTRY_COUNT;
 use std::io;
 
-#[derive(Debug)]
 pub struct PackBlockChain {
-    pub blocks: Vec<PackBlock>,
+    blocks: Vec<PackBlock>,
 }
 
 impl PackBlockChain {
-    pub(crate) fn new(blocks: Vec<PackBlock>) -> Self {
+    pub(in crate) fn new(blocks: Vec<PackBlock>) -> Self {
         PackBlockChain { blocks }
+    }
+
+    pub(in crate) fn push(&mut self, block: PackBlock) {
+        self.blocks.push(block);
     }
 
     pub fn offset(&self) -> u64 {
@@ -43,15 +47,15 @@ impl PackBlockChain {
             .flat_map(|blocks| &mut blocks.entries)
     }
 
-    /// Looks up the `folder` name in the specified [`PackBlockChain`], returning the index of the
-    /// ['PackBlockChain'] corresponding to the folder if successful.
-    pub fn find_block_chain_index_in(&self, folder: &str) -> Result<u64> {
+    /// Looks up the `directory` name in the specified [`PackBlockChain`], returning the index of the
+    /// ['PackBlockChain'] corresponding to the directory if successful.
+    pub fn find_block_chain_index_in(&self, directory: &str) -> Result<u64> {
         for entry in self.iter() {
             return match entry {
-                PackEntry::Folder {
+                PackEntry::Directory {
                     name, pos_children, ..
-                } if name == folder => Ok(*pos_children),
-                PackEntry::File { name, .. } if name == folder => Err(io::Error::new(
+                } if name == directory => Ok(*pos_children),
+                PackEntry::File { name, .. } if name == directory => Err(io::Error::new(
                     io::ErrorKind::Other,
                     "Expected a directory, found a file",
                 )),
@@ -59,8 +63,20 @@ impl PackBlockChain {
             };
         }
         Err(err_not_found(
-            ["Unable to find directory ", folder].join(""),
+            ["Unable to find directory ", directory].join(""),
         ))
+    }
+}
+
+impl AsRef<[PackBlock]> for PackBlockChain {
+    fn as_ref(&self) -> &[PackBlock] {
+        &self.blocks
+    }
+}
+
+impl AsMut<[PackBlock]> for PackBlockChain {
+    fn as_mut(&mut self) -> &mut [PackBlock] {
+        &mut self.blocks
     }
 }
 
@@ -77,16 +93,14 @@ impl ops::IndexMut<usize> for PackBlockChain {
     }
 }
 
-#[derive(Derivative)]
-#[derivative(Debug, Default)]
+#[derive(Default)]
 pub struct PackBlock {
     pub offset: u64,
-    #[derivative(Debug = "ignore")]
     pub entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT],
 }
 
 impl PackBlock {
-    pub(crate) fn from_reader<R: Read>(mut r: R, offset: u64) -> Result<Self> {
+    pub(in crate) fn from_reader<R: Read>(mut r: R, offset: u64) -> Result<Self> {
         let mut entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT] = Default::default();
         for entry in &mut entries {
             *entry = PackEntry::from_reader(&mut r)?;
