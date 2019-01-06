@@ -7,7 +7,7 @@ use crate::archive::err_not_found;
 use crate::constants::PK2_FILE_BLOCK_ENTRY_COUNT;
 use std::io;
 
-pub struct PackBlockChain {
+pub(in crate) struct PackBlockChain {
     blocks: Vec<PackBlock>,
 }
 
@@ -20,28 +20,28 @@ impl PackBlockChain {
         self.blocks.push(block);
     }
 
-    pub fn offset(&self) -> u64 {
+    pub(in crate) fn offset(&self) -> u64 {
         self.blocks[0].offset
     }
 
-    pub fn get_file_offset_for_entry(&self, idx: usize) -> Option<u64> {
+    pub(in crate) fn get_file_offset_for_entry(&self, idx: usize) -> Option<u64> {
         Some(
             self.blocks.get(idx / PK2_FILE_BLOCK_ENTRY_COUNT)?.offset
                 + (idx % PK2_FILE_BLOCK_ENTRY_COUNT) as u64,
         )
     }
 
-    pub fn find_first_empty_mut(&mut self) -> Option<(usize, &mut PackEntry)> {
+    pub(in crate) fn find_first_empty_mut(&mut self) -> Option<(usize, &mut PackEntry)> {
         self.iter_mut()
             .enumerate()
             .find(|(_, entry)| entry.is_empty())
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &'_ PackEntry> + '_ {
+    pub(in crate) fn iter(&self) -> impl Iterator<Item = &PackEntry> {
         self.blocks.iter().flat_map(|blocks| &blocks.entries)
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &'_ mut PackEntry> + '_ {
+    pub(in crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut PackEntry> {
         self.blocks
             .iter_mut()
             .flat_map(|blocks| &mut blocks.entries)
@@ -49,7 +49,7 @@ impl PackBlockChain {
 
     /// Looks up the `directory` name in the specified [`PackBlockChain`], returning the index of the
     /// ['PackBlockChain'] corresponding to the directory if successful.
-    pub fn find_block_chain_index_in(&self, directory: &str) -> Result<u64> {
+    pub(in crate) fn find_block_chain_index_in(&self, directory: &str) -> Result<u64> {
         for entry in self.iter() {
             return match entry {
                 PackEntry::Directory {
@@ -94,9 +94,9 @@ impl ops::IndexMut<usize> for PackBlockChain {
 }
 
 #[derive(Default)]
-pub struct PackBlock {
-    pub offset: u64,
-    pub entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT],
+pub(in crate) struct PackBlock {
+    pub(in crate) offset: u64,
+    pub(in crate) entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT],
 }
 
 impl PackBlock {
@@ -108,7 +108,7 @@ impl PackBlock {
         Ok(PackBlock { offset, entries })
     }
 
-    pub fn to_writer<W: Write>(&self, mut w: W) -> Result<()> {
+    pub(in crate) fn to_writer<W: Write>(&self, mut w: W) -> Result<()> {
         for entry in &self.entries {
             entry.to_writer(&mut w)?;
         }

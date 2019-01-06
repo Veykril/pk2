@@ -1,5 +1,4 @@
 use std::io::{self, Read, Result, Seek, SeekFrom};
-use std::path::Path;
 
 use crate::archive::{PackEntry, Pk2};
 
@@ -11,10 +10,6 @@ pub struct File<'a> {
 }
 
 impl<'a> File<'a> {
-    pub fn open<P: AsRef<Path>>(archive: &'a Pk2, path: P) -> Result<Self> {
-        archive.open_file(path)
-    }
-
     pub(in crate) fn new(archive: &'a Pk2, entry: &'a PackEntry) -> Self {
         File {
             archive,
@@ -62,6 +57,13 @@ impl Read for File<'_> {
             Ok(n)
         }
     }
+
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
+        let len = buf.len();
+        let size = self.pos_data_and_size().1;
+        buf.resize(len + size as usize, 0);
+        self.read(&mut buf[len..])
+    }
 }
 
 impl Seek for File<'_> {
@@ -87,27 +89,3 @@ impl Seek for File<'_> {
         }
     }
 }
-/*
-impl Write for File<'_> {
-    fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        if buf.is_empty() {
-            Ok(0)
-        } else {
-            let (pos_data, size) = self.pos_data_and_size();
-            let n = match self.archive.file.borrow_mut() {
-                mut file => {
-                    file.seek(SeekFrom::Start(pos_data + self.pos))?;
-                    let len = (size as usize - self.pos as usize).min(buf.len());
-                    file.write(&buf[..len])?
-                }
-            };
-            self.seek(SeekFrom::Current(n as i64)).unwrap();
-            Ok(n)
-        }
-    }
-
-    fn flush(&mut self) -> Result<()> {
-        self.archive.file.borrow_mut().flush()
-    }
-}
-*/

@@ -13,7 +13,7 @@ pub struct Directory<'a> {
 }
 
 impl<'a> Directory<'a> {
-    pub fn new(
+    pub(in crate) fn new(
         archive: &'a Pk2,
         block_chain: &'a PackBlockChain,
         entry: Option<&'a PackEntry>,

@@ -8,12 +8,12 @@ use crate::archive::{err_not_found, PackBlock, PackBlockChain, PackEntry};
 use crate::constants::{PK2_FILE_BLOCK_SIZE, PK2_ROOT_BLOCK};
 use crate::Blowfish;
 
-pub struct BlockManager {
-    pub chains: HashMap<u64, PackBlockChain>,
+pub(in crate) struct BlockManager {
+    pub(in crate) chains: HashMap<u64, PackBlockChain>,
 }
 
 impl BlockManager {
-    pub fn new<R: Read + Seek>(bf: &mut Blowfish, mut r: R) -> Result<Self> {
+    pub(in crate) fn new<R: Read + Seek>(bf: &mut Blowfish, mut r: R) -> Result<Self> {
         let mut chains = HashMap::new();
         let mut offsets = vec![PK2_ROOT_BLOCK];
         // eager population of the file index, cause lazy initialization would require either interior mutability or &mut self everywhere
