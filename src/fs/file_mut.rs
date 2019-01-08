@@ -89,8 +89,6 @@ impl Write for FileMut<'_> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        // new file, data block does not exist, file entry is still empty in file
-        //
         let (file_data_pos, file_data_size) = match *self.entry() {
             PackEntry::File { pos_data, size, .. } => (pos_data, size),
             _ => unreachable!(),

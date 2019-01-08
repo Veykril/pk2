@@ -40,8 +40,10 @@ impl Pk2 {
         let mut file = PhysFile::new(file, bf);
 
         header.to_writer(&mut *file.borrow_mut())?;
-        file.create_new_block_at(PK2_ROOT_BLOCK)?;
-        // todo insert "." to self into the block
+        let mut block = PackBlock::default();
+        block.offset = PK2_ROOT_BLOCK;
+        block[0] = PackEntry::new_directory(".".to_owned(), PK2_ROOT_BLOCK, None);
+        file.write_block(&block)?;
 
         let block_mgr = BlockManager::new(&mut file)?;
         Ok(Pk2 {
@@ -114,8 +116,9 @@ impl Pk2 {
                         self.file.write_entry_at(offset, &block_chain[idx])?;
                         let mut block = PackBlock::default();
                         block.offset = offset;
-                        // todo insert entry ".." to parent block_chain
-                        // todo insert entry "." to self
+                        block[0] = PackEntry::new_directory(".".to_owned(), offset, None);
+                        block[1] =
+                            PackEntry::new_directory("..".to_owned(), block_chain.offset(), None);
                         self.file.write_block(&block)?;
                         self.block_mgr
                             .chains
@@ -182,11 +185,17 @@ impl Pk2 {
         Ok(FileMut::new(self, chain.offset(), idx, buf))
     }
 
-    /*
-        pub fn delete_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-            unimplemented!()
-        }
-    */
+    /// Currently only replaces the entry with an empty one making the data inaccessible by normal means
+    pub fn delete_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+        let (chain, idx, entry) = self
+            .block_mgr
+            .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)?
+            .unwrap();
+        let next_chain = entry.next_chain();
+        self.block_mgr.chains.get_mut(&chain.offset()).unwrap()[idx] =
+            PackEntry::Empty { next_chain };
+        Ok(())
+    }
 
     pub fn open_dir<P: AsRef<Path>>(&self, path: P) -> Result<Directory> {
         let (chain, entry) = match self
