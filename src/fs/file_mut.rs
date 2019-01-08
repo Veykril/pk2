@@ -98,7 +98,7 @@ impl Write for FileMut<'_> {
         // new unwritten file
         if file_data_pos == 0 {
             // allocate new data buffer in file
-            let data_pos = self.archive.write_new_data_buffer_to_file(&self.data)?;
+            let data_pos = self.archive.file.write_new_data_buffer(&self.data)?;
             let data_len = self.data.len();
             match self.entry_mut() {
                 PackEntry::File { pos_data, size, .. } => {
@@ -110,15 +110,14 @@ impl Write for FileMut<'_> {
             let entry_offset = self.archive.block_mgr.chains[&self.chain]
                 .get_file_offset_for_entry(self.entry_index)
                 .unwrap();
-            Pk2::write_entry_to_file_at(
-                &mut *self.archive.file.borrow_mut(),
-                &mut self.archive.bf,
+            self.archive.file.write_entry_at(
                 entry_offset,
                 &self.archive.block_mgr.chains[&self.chain][self.entry_index],
             )?;
         } else if file_data_size >= self.data.len() as u32 {
             self.archive
-                .write_data_buffer_to_file_at(file_data_pos, &self.data)?;
+                .file
+                .write_data_buffer_at(file_data_pos, &self.data)?;
         } else {
             unimplemented!("relocate data block")
         }

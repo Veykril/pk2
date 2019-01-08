@@ -1,24 +1,22 @@
-use block_modes::BlockMode;
 use hashbrown::HashMap;
 
-use std::io::{self, Cursor, Read, Result, Seek, SeekFrom};
+use std::io::{self, Result};
 use std::path::{Component, Path};
 
-use crate::archive::{err_not_found, PackBlock, PackBlockChain, PackEntry};
-use crate::constants::{PK2_FILE_BLOCK_SIZE, PK2_ROOT_BLOCK};
-use crate::Blowfish;
+use crate::archive::{err_not_found, PackBlockChain, PackEntry, PhysFile};
+use crate::constants::PK2_ROOT_BLOCK;
 
 pub(in crate) struct BlockManager {
     pub(in crate) chains: HashMap<u64, PackBlockChain>,
 }
 
 impl BlockManager {
-    pub(in crate) fn new<R: Read + Seek>(bf: &mut Blowfish, mut r: R) -> Result<Self> {
+    pub(in crate) fn new(file: &mut PhysFile) -> Result<Self> {
         let mut chains = HashMap::new();
         let mut offsets = vec![PK2_ROOT_BLOCK];
         // eager population of the file index, cause lazy initialization would require either interior mutability or &mut self everywhere
         while let Some(offset) = offsets.pop() {
-            let block = Self::read_chain_from_file_at(bf, &mut r, offset)?;
+            let block = Self::read_chain_from_file_at(file, offset)?;
             for block in block.as_ref() {
                 for entry in &block.entries {
                     if let PackEntry::Directory {
@@ -37,19 +35,11 @@ impl BlockManager {
     }
 
     /// Reads a [`PackBlockChain`] from the given reader `r` at the specified offset
-    fn read_chain_from_file_at<R: Read + Seek>(
-        bf: &mut Blowfish,
-        mut r: R,
-        offset: u64,
-    ) -> Result<PackBlockChain> {
+    fn read_chain_from_file_at(file: &mut PhysFile, offset: u64) -> Result<PackBlockChain> {
         let mut offset = offset;
-        let mut buf = [0; PK2_FILE_BLOCK_SIZE];
         let mut blocks = Vec::new();
         loop {
-            r.seek(SeekFrom::Start(offset))?;
-            r.read_exact(&mut buf)?;
-            let _ = bf.decrypt_nopad(&mut buf);
-            let block = PackBlock::from_reader(Cursor::new(&buf[..]), offset)?;
+            let block = file.read_block_at(offset)?;
             let nc = block[19].next_chain();
             blocks.push(block);
             match nc {
@@ -59,13 +49,13 @@ impl BlockManager {
         }
     }
 
-    /// Resolves a path from the specified chain to a parent chain, entry index and the entry
+    /// Resolves a path from the specified chain to a parent chain and the entry
     /// Returns Ok(None) if the path is empty
     pub(in crate) fn resolve_path_to_entry_and_parent(
         &self,
         current_chain: u64,
         path: &Path,
-    ) -> Result<Option<(&PackBlockChain, &PackEntry)>> {
+    ) -> Result<Option<(&PackBlockChain, usize, &PackEntry)>> {
         let mut components = path.components();
         if let Some(c) = components.next_back() {
             let name = c.as_os_str().to_str();
@@ -73,9 +63,10 @@ impl BlockManager {
                 .resolve_path_to_block_chain_index_at(current_chain, components.as_path())?];
             parent
                 .iter()
-                .find(|entry| entry.name() == name)
+                .enumerate()
+                .find(|(_, entry)| entry.name() == name)
                 .ok_or_else(|| err_not_found(["Unable to find file ", name.unwrap()].join("")))
-                .map(|entry| Some((parent, entry)))
+                .map(|(idx, entry)| Some((parent, idx, entry)))
         } else {
             Ok(None)
         }

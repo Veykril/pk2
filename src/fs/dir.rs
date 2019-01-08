@@ -1,8 +1,7 @@
 use std::io::Result;
 use std::path::Path;
 
-use crate::archive::PackEntry;
-use crate::archive::{PackBlockChain, Pk2};
+use crate::archive::{PackBlockChain, PackEntry, Pk2};
 use crate::fs::file::File;
 
 #[derive(Copy, Clone)]
@@ -39,13 +38,13 @@ impl<'a> Directory<'a> {
             .block_mgr
             .resolve_path_to_entry_and_parent(self.block_chain.offset(), path.as_ref())?
         {
-            Some((_, e)) => Ok(File::new(self.archive, e)),
+            Some((_, _, e)) => Ok(File::new(self.archive, e)),
             None => unreachable!(),
         }
     }
 
     pub fn open_dir<P: AsRef<Path>>(&self, path: P) -> Result<Directory> {
-        let (parent, entry) = self
+        let (parent, _, entry) = self
             .archive
             .block_mgr
             .resolve_path_to_entry_and_parent(self.block_chain.offset(), path.as_ref())?
