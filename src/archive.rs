@@ -182,7 +182,8 @@ impl Pk2 {
             .unwrap();
         let mut buf = Vec::new();
         File::new(self, entry).read_to_end(&mut buf)?;
-        Ok(FileMut::new(self, chain.offset(), idx, buf))
+        let offset = chain.offset();
+        Ok(FileMut::new(self, offset, idx, buf))
     }
 
     /// Currently only replaces the entry with an empty one making the data inaccessible by normal means
@@ -192,8 +193,8 @@ impl Pk2 {
             .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)?
             .unwrap();
         let next_chain = entry.next_chain();
-        self.block_mgr.chains.get_mut(&chain.offset()).unwrap()[idx] =
-            PackEntry::Empty { next_chain };
+        let offset = chain.offset();
+        self.block_mgr.chains.get_mut(&offset).unwrap()[idx] = PackEntry::Empty { next_chain };
         Ok(())
     }
 

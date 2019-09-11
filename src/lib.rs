@@ -1,4 +1,4 @@
-#![allow(clippy::cast_lossless)]
+#![warn(clippy::allow)]
 mod archive;
 pub mod fs;
 

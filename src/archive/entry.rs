@@ -1,5 +1,5 @@
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
-use encoding::{all::WINDOWS_949, DecoderTrap, EncoderTrap, Encoding};
+use encoding_rs::EUC_KR;
 
 use std::io::{self, Read, Result, Write};
 use std::num::NonZeroU64;
@@ -138,9 +138,10 @@ impl PackEntry {
                         .iter()
                         .position(|b| *b == 0)
                         .unwrap_or_else(|| buf.len());
-                    WINDOWS_949
-                        .decode(&buf[..end], DecoderTrap::Replace)
-                        .unwrap() //todo replace unwrap and make use of the decoder trap
+                    EUC_KR
+                        .decode_without_bom_handling(&buf[..end])
+                        .0
+                        .into_owned()
                 };
                 let access_time = FILETIME {
                     dwLowDateTime: r.read_u32::<LE>()?,
@@ -211,7 +212,7 @@ impl PackEntry {
                 ..
             } => {
                 w.write_u8(if self.is_dir() { 1 } else { 2 })?;
-                let mut encoded = WINDOWS_949.encode(name, EncoderTrap::Strict).unwrap();
+                let mut encoded = EUC_KR.encode(name).0.into_owned();
                 encoded.resize(81, 0);
                 w.write_all(&encoded)?;
                 w.write_u32::<LE>(access_time.dwLowDateTime)?;
