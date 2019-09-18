@@ -5,10 +5,11 @@ use std::io::{self, Read, Result, Write};
 use std::num::NonZeroU64;
 
 use crate::constants::PK2_FILE_ENTRY_SIZE;
+use crate::ChainIndex;
 use crate::FILETIME;
 
 #[derive(Clone, Eq, PartialEq)]
-pub(in crate) enum PackEntry {
+pub enum PackEntry {
     Empty {
         next_chain: Option<NonZeroU64>,
     },
@@ -17,7 +18,7 @@ pub(in crate) enum PackEntry {
         access_time: FILETIME,
         create_time: FILETIME,
         modify_time: FILETIME,
-        pos_children: u64,
+        pos_children: ChainIndex,
         next_chain: Option<NonZeroU64>,
     },
     File {
@@ -25,7 +26,7 @@ pub(in crate) enum PackEntry {
         access_time: FILETIME,
         create_time: FILETIME,
         modify_time: FILETIME,
-        pos_data: u64,
+        pos_data: ChainIndex,
         size: u32,
         next_chain: Option<NonZeroU64>,
     },
@@ -38,12 +39,26 @@ impl Default for PackEntry {
 }
 
 impl PackEntry {
-    pub fn new_directory(name: String, pos_children: u64, next_chain: Option<NonZeroU64>) -> Self {
+    pub fn new_directory(
+        name: String,
+        pos_children: ChainIndex,
+        next_chain: Option<NonZeroU64>,
+    ) -> Self {
         PackEntry::Directory {
             name,
-            access_time: Default::default(),
-            create_time: Default::default(),
-            modify_time: Default::default(),
+            /// FIXME filetimes
+            access_time: FILETIME {
+                dwLowDateTime: 0x7414,
+                dwHighDateTime: 0xB8BF,
+            },
+            create_time: FILETIME {
+                dwLowDateTime: 0x7414,
+                dwHighDateTime: 0xB8BF,
+            },
+            modify_time: FILETIME {
+                dwLowDateTime: 0x7414,
+                dwHighDateTime: 0xB8BF,
+            },
             pos_children,
             next_chain,
         }
@@ -51,7 +66,7 @@ impl PackEntry {
 
     pub fn new_file(
         name: String,
-        pos_data: u64,
+        pos_data: ChainIndex,
         size: u32,
         next_chain: Option<NonZeroU64>,
     ) -> Self {
@@ -66,7 +81,7 @@ impl PackEntry {
         }
     }
 
-    pub fn pos_children(&self) -> Option<u64> {
+    pub fn pos_children(&self) -> Option<ChainIndex> {
         match *self {
             PackEntry::Directory { pos_children, .. } => Some(pos_children),
             _ => None,
@@ -81,7 +96,7 @@ impl PackEntry {
         }
     }
 
-    pub fn set_next_chain(&mut self, nc: u64) {
+    pub fn set_next_chain(&mut self, nc: ChainIndex) {
         match self {
             PackEntry::Empty { .. } => (),
             PackEntry::Directory {
@@ -124,7 +139,7 @@ impl PackEntry {
 
 impl PackEntry {
     // Will always seek to the end of the entry
-    pub(in crate) fn from_reader<R: Read>(mut r: R) -> Result<Self> {
+    pub fn from_reader<R: Read>(mut r: R) -> Result<Self> {
         match r.read_u8()? {
             0 => {
                 r.read_exact(&mut [0; PK2_FILE_ENTRY_SIZE - 1])?; //seek to end of entry
@@ -222,10 +237,10 @@ impl PackEntry {
                 w.write_u32::<LE>(modify_time.dwLowDateTime)?;
                 w.write_u32::<LE>(modify_time.dwHighDateTime)?;
                 w.write_u64::<LE>(*position)?;
-                w.write_u32::<LE>(match self {
-                    PackEntry::Directory { .. } => 0,
-                    PackEntry::File { size, .. } => *size,
-                    _ => unreachable!(),
+                w.write_u32::<LE>(if let PackEntry::File { size, .. } = self {
+                    *size
+                } else {
+                    0
                 })?;
                 w.write_u64::<LE>(next_chain.map_or(0, |nc| nc.get()))?;
                 w.write_u16::<LE>(0)?;

@@ -1,82 +1,88 @@
-use std::convert::{AsMut, AsRef};
-use std::io::{Read, Result, Write};
+use std::io::{self, Read, Result, Write};
 use std::ops;
 
 use crate::archive::entry::PackEntry;
 use crate::archive::err_not_found;
-use crate::constants::PK2_FILE_BLOCK_ENTRY_COUNT;
-use std::io;
+use crate::constants::*;
+use crate::ChainIndex;
 
-pub(in crate) struct PackBlockChain {
-    blocks: Vec<PackBlock>,
+pub struct PackBlockChain {
+    // the blocks are boxed to prevent reallocations of the vec from moving them, this would invalidate outstanding references
+    blocks: Vec<Box<PackBlock>>,
 }
 
 impl PackBlockChain {
-    pub(in crate) fn new(blocks: Vec<PackBlock>) -> Self {
+    #[inline]
+    pub fn from_blocks(blocks: Vec<Box<PackBlock>>) -> Self {
+        debug_assert!(!blocks.is_empty());
         PackBlockChain { blocks }
     }
 
-    pub(in crate) fn push(&mut self, block: PackBlock) {
-        self.blocks.push(block);
+    #[inline]
+    pub fn push(&mut self, block: PackBlock) {
+        self.blocks.push(Box::new(block));
     }
 
-    pub(in crate) fn offset(&self) -> u64 {
+    /// This blockchains chain index/file offset.
+    /// Note: This is the same as its first block
+    #[inline]
+    pub fn chain_index(&self) -> ChainIndex {
         self.blocks[0].offset
     }
 
-    pub(in crate) fn get_file_offset_for_entry(&self, idx: usize) -> Option<u64> {
-        Some(
-            self.blocks.get(idx / PK2_FILE_BLOCK_ENTRY_COUNT)?.offset
-                + (idx % PK2_FILE_BLOCK_ENTRY_COUNT) as u64,
-        )
+    /// Returns the file offset of entry at idx in this block chain.
+    pub fn file_offset_for_entry(&self, idx: usize) -> Option<ChainIndex> {
+        self.blocks
+            .get(idx / PK2_FILE_BLOCK_ENTRY_COUNT)
+            .map(|block| {
+                block.offset
+                    + (PK2_FILE_ENTRY_SIZE * (idx % PK2_FILE_BLOCK_ENTRY_COUNT)) as ChainIndex
+            })
     }
 
-    pub(in crate) fn find_first_empty_mut(&mut self) -> Option<(usize, &mut PackEntry)> {
-        self.iter_mut()
+    /// Fetches the first empty pack entry in this chain
+    pub fn find_first_empty_mut(&mut self) -> Option<(usize, &mut PackEntry)> {
+        self.entries_mut()
             .enumerate()
             .find(|(_, entry)| entry.is_empty())
     }
 
-    pub(in crate) fn iter(&self) -> impl Iterator<Item = &PackEntry> {
-        self.blocks.iter().flat_map(|blocks| &blocks.entries)
+    pub fn entries(&self) -> impl Iterator<Item = &PackEntry> {
+        self.blocks.iter().flat_map(|block| &block.entries)
     }
 
-    pub(in crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut PackEntry> {
+    pub fn entries_mut(&mut self) -> impl Iterator<Item = &mut PackEntry> {
+        self.blocks.iter_mut().flat_map(|block| &mut block.entries)
+    }
+
+    pub fn get(&self, entry: usize) -> Option<&PackEntry> {
         self.blocks
-            .iter_mut()
-            .flat_map(|blocks| &mut blocks.entries)
+            .get(entry / PK2_FILE_BLOCK_ENTRY_COUNT)
+            .and_then(|block| block.get(entry % PK2_FILE_BLOCK_ENTRY_COUNT))
     }
 
-    /// Looks up the `directory` name in the specified [`PackBlockChain`], returning the index of the
+    pub fn get_mut(&mut self, entry: usize) -> Option<&mut PackEntry> {
+        self.blocks
+            .get_mut(entry / PK2_FILE_BLOCK_ENTRY_COUNT)
+            .and_then(|block| block.get_mut(entry % PK2_FILE_BLOCK_ENTRY_COUNT))
+    }
+
+    /// Looks up the `directory` name in this [`PackBlockChain`], returning the offset of the
     /// ['PackBlockChain'] corresponding to the directory if successful.
-    pub(in crate) fn find_block_chain_index_in(&self, directory: &str) -> Result<u64> {
-        for entry in self.iter() {
-            return match entry {
-                PackEntry::Directory {
-                    name, pos_children, ..
-                } if name == directory => Ok(*pos_children),
-                PackEntry::File { name, .. } if name == directory => Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Expected a directory, found a file",
-                )),
-                _ => continue,
-            };
+    pub fn find_block_chain_index_of(&self, directory: &str) -> Result<ChainIndex> {
+        for entry in self.entries() {
+            if entry.name() == Some(directory) {
+                return match entry {
+                    &PackEntry::Directory { pos_children, .. } => Ok(pos_children),
+                    PackEntry::File { .. } => Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "found file where directory was expected",
+                    )),
+                    _ => continue,
+                };
+            }
         }
-        Err(err_not_found(
-            ["Unable to find directory ", directory].join(""),
-        ))
-    }
-}
-
-impl AsRef<[PackBlock]> for PackBlockChain {
-    fn as_ref(&self) -> &[PackBlock] {
-        &self.blocks
-    }
-}
-
-impl AsMut<[PackBlock]> for PackBlockChain {
-    fn as_mut(&mut self) -> &mut [PackBlock] {
-        &mut self.blocks
+        Err(err_not_found(["directory not found: ", directory].concat()))
     }
 }
 
@@ -94,13 +100,17 @@ impl ops::IndexMut<usize> for PackBlockChain {
 }
 
 #[derive(Default)]
-pub(in crate) struct PackBlock {
-    pub(in crate) offset: u64,
-    pub(in crate) entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT],
+pub struct PackBlock {
+    pub offset: ChainIndex,
+    pub entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT],
 }
 
 impl PackBlock {
-    pub(in crate) fn from_reader<R: Read>(mut r: R, offset: u64) -> Result<Self> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_reader<R: Read>(mut r: R, offset: ChainIndex) -> Result<Self> {
         let mut entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT] = Default::default();
         for entry in &mut entries {
             *entry = PackEntry::from_reader(&mut r)?;
@@ -108,11 +118,19 @@ impl PackBlock {
         Ok(PackBlock { offset, entries })
     }
 
-    pub(in crate) fn to_writer<W: Write>(&self, mut w: W) -> Result<()> {
+    pub fn to_writer<W: Write>(&self, mut w: W) -> Result<()> {
         for entry in &self.entries {
             entry.to_writer(&mut w)?;
         }
         Ok(())
+    }
+
+    pub fn get(&self, entry: usize) -> Option<&PackEntry> {
+        self.entries.get(entry)
+    }
+
+    pub fn get_mut(&mut self, entry: usize) -> Option<&mut PackEntry> {
+        self.entries.get_mut(entry)
     }
 }
 

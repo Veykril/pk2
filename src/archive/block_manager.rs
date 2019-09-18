@@ -2,66 +2,77 @@ use std::collections::HashMap;
 use std::io::{self, Result};
 use std::path::{Component, Path};
 
-use crate::archive::{err_not_found, PackBlockChain, PackEntry, PhysFile};
+use crate::archive::{err_not_found, PackBlockChain, PackEntry};
 use crate::constants::PK2_ROOT_BLOCK;
+use crate::ChainIndex;
+use crate::PhysicalFile;
 
-pub(in crate) struct BlockManager {
-    pub(in crate) chains: HashMap<u64, PackBlockChain>,
+pub struct BlockManager {
+    pub chains: HashMap<ChainIndex, PackBlockChain>,
 }
 
 impl BlockManager {
-    pub(in crate) fn new(file: &mut PhysFile) -> Result<Self> {
+    pub fn new(file: &PhysicalFile) -> Result<Self> {
         let mut chains = HashMap::new();
         let mut offsets = vec![PK2_ROOT_BLOCK];
-        // eager population of the file index, cause lazy initialization would require either interior mutability or &mut self everywhere
         while let Some(offset) = offsets.pop() {
-            let block = Self::read_chain_from_file_at(file, offset)?;
-            for block in block.as_ref() {
-                for entry in &block.entries {
-                    if let PackEntry::Directory {
-                        name, pos_children, ..
-                    } = entry
-                    {
-                        if name != "." && name != ".." {
-                            offsets.push(*pos_children);
-                        }
+            let block_chain = Self::read_chain_from_file_at(file, offset)?;
+            for entry in block_chain.entries() {
+                if let PackEntry::Directory {
+                    name, pos_children, ..
+                } = entry
+                {
+                    if name != "." && name != ".." {
+                        offsets.push(*pos_children);
                     }
                 }
             }
-            chains.insert(offset, block);
+            chains.insert(offset, block_chain);
         }
         Ok(BlockManager { chains })
     }
 
-    /// Reads a [`PackBlockChain`] from the given reader `r` at the specified offset
-    fn read_chain_from_file_at(file: &mut PhysFile, offset: u64) -> Result<PackBlockChain> {
-        let mut offset = offset;
+    /// Reads a [`PackBlockChain`] from the given file at the specified offset.
+    /// Note: FIXME Can potentially end up in a neverending loop with a specially crafted file.
+    fn read_chain_from_file_at(
+        file: &PhysicalFile,
+        mut offset: ChainIndex,
+    ) -> Result<PackBlockChain> {
         let mut blocks = Vec::new();
         loop {
             let block = file.read_block_at(offset)?;
-            let nc = block[19].next_chain();
-            blocks.push(block);
+            let nc = block.entries.iter().rev().find_map(PackEntry::next_chain);
+            blocks.push(Box::new(block));
             match nc {
                 Some(nc) => offset = nc.get(),
-                None => break Ok(PackBlockChain::new(blocks)),
+                None => break Ok(PackBlockChain::from_blocks(blocks)),
             }
         }
     }
 
+    pub fn get(&self, chain: ChainIndex) -> Option<&PackBlockChain> {
+        self.chains.get(&chain)
+    }
+
+    pub fn get_mut(&mut self, chain: ChainIndex) -> Option<&mut PackBlockChain> {
+        self.chains.get_mut(&chain)
+    }
+
     /// Resolves a path from the specified chain to a parent chain and the entry
-    /// Returns Ok(None) if the path is empty
-    pub(in crate) fn resolve_path_to_entry_and_parent(
+    /// Returns Ok(None) if the path is empty, otherwise (blockchain, entry_index, entry)
+    pub fn resolve_path_to_entry_and_parent(
         &self,
-        current_chain: u64,
+        current_chain: ChainIndex,
         path: &Path,
     ) -> Result<Option<(&PackBlockChain, usize, &PackEntry)>> {
         let mut components = path.components();
         if let Some(c) = components.next_back() {
+            let parent_index =
+                self.resolve_path_to_block_chain_index_at(current_chain, components.as_path())?;
+            let parent = &self.chains[&parent_index];
             let name = c.as_os_str().to_str();
-            let parent = &self.chains[&self
-                .resolve_path_to_block_chain_index_at(current_chain, components.as_path())?];
             parent
-                .iter()
+                .entries()
                 .enumerate()
                 .find(|(_, entry)| entry.name() == name)
                 .ok_or_else(|| err_not_found(["Unable to find file ", name.unwrap()].join("")))
@@ -71,29 +82,34 @@ impl BlockManager {
         }
     }
 
-    /// Resolves a path to a [`PackBlockChain`] index starting from the given chain
-    pub(in crate) fn resolve_path_to_block_chain_index_at(
+    /// Resolves a path to a [`PackBlockChain`] index starting from the given
+    /// blockchain returning the index of the last blockchain.
+    pub fn resolve_path_to_block_chain_index_at(
         &self,
-        current_chain: u64,
+        current_chain: ChainIndex,
         path: &Path,
-    ) -> Result<u64> {
+    ) -> Result<ChainIndex> {
         path.components().try_fold(current_chain, |idx, component| {
-            self.chains[&idx].find_block_chain_index_in(component.as_os_str().to_str().unwrap())
+            let comp = component
+                .as_os_str()
+                .to_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "erroneous path"))?;
+            self.chains[&idx].find_block_chain_index_of(comp)
         })
     }
 
-    /// checks the existence of the given path as a directory and returns the last existing chain
-    /// and the non-existent rest of the path if left
-    pub(in crate) fn validate_dir_path_until<'a>(
+    /// Traverses the path until it hits a non-existent component and returns
+    /// the rest of the path as well as the chain index of the last valid part.
+    pub fn validate_dir_path_until<'p>(
         &self,
-        mut chain: u64,
-        path: &'a Path,
-    ) -> Result<(u64, &'a Path)> {
+        mut chain: ChainIndex,
+        path: &'p Path,
+    ) -> Result<(ChainIndex, &'p Path)> {
         let components = path.components();
         let mut n = 0;
         for component in components {
             let name = component.as_os_str().to_str().unwrap();
-            match self.chains[&chain].find_block_chain_index_in(name) {
+            match self.chains[&chain].find_block_chain_index_of(name) {
                 Ok(i) => {
                     chain = i;
                     n += 1;

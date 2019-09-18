@@ -21,7 +21,7 @@ impl Default for PackHeader {
             signature: *constants::PK2_SIGNATURE,
             version: constants::PK2_VERSION,
             encrypted: false,
-            verify: [0; 16],
+            verify: *constants::PK2_CHECKSUM,
             reserved: [0; 205],
         }
     }
@@ -29,15 +29,10 @@ impl Default for PackHeader {
 
 impl PackHeader {
     pub(in crate) fn new_encrypted(bf: &mut Blowfish) -> Self {
-        let mut checksum = *constants::PK2_CHECKSUM;
-        let _ = bf.encrypt_nopad(&mut checksum);
-        PackHeader {
-            signature: *constants::PK2_SIGNATURE,
-            version: constants::PK2_VERSION,
-            encrypted: true,
-            verify: checksum,
-            reserved: [0; 205],
-        }
+        let mut this = Self::default();
+        let _ = bf.encrypt_nopad(&mut this.verify);
+        this.encrypted = true;
+        this
     }
 
     pub(in crate) fn from_reader<R: Read>(mut r: R) -> Result<Self> {
@@ -62,7 +57,8 @@ impl PackHeader {
         w.write_all(&self.signature)?;
         w.write_u32::<LE>(self.version)?;
         w.write_u8(self.encrypted as u8)?;
-        w.write_all(&self.verify)?;
+        w.write_all(&self.verify[..3])?;
+        w.write_all(&[0; 16 - 3])?;
         w.write_all(&self.reserved)?;
         Ok(())
     }
