@@ -17,22 +17,22 @@ mod block_manager;
 mod entry;
 mod header;
 
-pub use self::block_chain::{PackBlock, PackBlockChain};
-pub use self::block_manager::BlockManager;
-pub use self::entry::PackEntry;
-pub use self::header::PackHeader;
+pub(crate) use self::block_chain::{PackBlock, PackBlockChain};
+pub(crate) use self::block_manager::BlockManager;
+pub(crate) use self::entry::PackEntry;
+pub(crate) use self::header::PackHeader;
 
 // !0 means borrowed mutably
 #[derive(PartialEq)]
-pub struct BorrowFlags(u32);
+pub(crate) struct BorrowFlags(u32);
 
 impl BorrowFlags {
     const MUT_FLAG: u32 = !0;
-    pub fn new() -> Self {
+    fn new() -> Self {
         BorrowFlags(0)
     }
 
-    pub fn try_borrow(&mut self) -> Result<()> {
+    pub(crate) fn try_borrow(&mut self) -> Result<()> {
         match self.0.saturating_add(1) {
             Self::MUT_FLAG => Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -45,7 +45,7 @@ impl BorrowFlags {
         }
     }
 
-    pub fn try_borrow_mut(&mut self) -> Result<()> {
+    pub(crate) fn try_borrow_mut(&mut self) -> Result<()> {
         match self.0 {
             0 => {
                 self.0 = Self::MUT_FLAG;
@@ -58,7 +58,7 @@ impl BorrowFlags {
         }
     }
 
-    pub fn drop_borrow(&mut self) -> bool {
+    pub(crate) fn drop_borrow(&mut self) -> bool {
         match self.0 {
             Self::MUT_FLAG => self.0 = 0,
             _ => self.0 = self.0.saturating_sub(1),
@@ -97,7 +97,7 @@ impl Pk2 {
 
         header.to_writer(&mut file)?;
         let mut block = PackBlock::new();
-        block.offset = PK2_ROOT_BLOCK;
+        block.offset = PK2_ROOT_BLOCK.0;
         block[0] = PackEntry::new_directory(".".to_owned(), PK2_ROOT_BLOCK, None);
         file.write_block(&block)?;
 
@@ -317,7 +317,7 @@ impl Pk2 {
                     };
                     // Are we done after this? if not, create a new blockchain
                     if components.peek().is_some() {
-                        let new_chain_offset = self.file.len()?;
+                        let new_chain_offset = self.file.len().map(ChainIndex)?;
                         let entry = &mut current_chain[idx];
                         *entry = PackEntry::new_directory(
                             p.to_str().unwrap().to_owned(),
@@ -326,7 +326,7 @@ impl Pk2 {
                         );
                         let offset = current_chain.file_offset_for_entry(idx).unwrap();
                         let mut block = PackBlock::default();
-                        block.offset = new_chain_offset;
+                        block.offset = new_chain_offset.0;
                         block[0] =
                             PackEntry::new_directory(".".to_string(), new_chain_offset, None);
                         block[1] = PackEntry::new_directory(

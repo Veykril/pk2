@@ -7,25 +7,25 @@ use crate::constants::PK2_ROOT_BLOCK;
 use crate::ChainIndex;
 use crate::PhysicalFile;
 
-pub struct BlockManager {
+pub(crate) struct BlockManager {
     pub chains: HashMap<ChainIndex, PackBlockChain>,
 }
 
 impl BlockManager {
     /// Parses the complete index of a pk2 file
-    pub fn new(file: &PhysicalFile) -> Result<Self> {
+    pub(crate) fn new(file: &PhysicalFile) -> Result<Self> {
         let mut chains = HashMap::new();
-        let mut offsets = vec![PK2_ROOT_BLOCK];
+        let mut offsets = vec![PK2_ROOT_BLOCK.0];
         while let Some(offset) = offsets.pop() {
             let block_chain = Self::read_chain_from_file_at(file, offset)?;
             // put all folder offsets of this chain into the stack to parse them next
             offsets.extend(block_chain.entries().filter_map(|entry| match entry {
                 PackEntry::Directory {
                     name, pos_children, ..
-                } if !(name == "." || name == "..") => Some(*pos_children),
+                } if !(name == "." || name == "..") => Some(pos_children.0),
                 _ => None,
             }));
-            chains.insert(offset, block_chain);
+            chains.insert(ChainIndex(offset), block_chain);
         }
         Ok(BlockManager { chains })
     }
@@ -33,10 +33,7 @@ impl BlockManager {
     /// Reads a [`PackBlockChain`] from the given file at the specified offset.
     /// Note: FIXME Can potentially end up in a neverending loop with a
     /// specially crafted file.
-    fn read_chain_from_file_at(
-        file: &PhysicalFile,
-        mut offset: ChainIndex,
-    ) -> Result<PackBlockChain> {
+    fn read_chain_from_file_at(file: &PhysicalFile, mut offset: u64) -> Result<PackBlockChain> {
         let mut blocks = Vec::new();
         loop {
             let block = file.read_block_at(offset)?;
@@ -49,18 +46,18 @@ impl BlockManager {
         }
     }
 
-    pub fn get(&self, chain: ChainIndex) -> Option<&PackBlockChain> {
+    pub(crate) fn get(&self, chain: ChainIndex) -> Option<&PackBlockChain> {
         self.chains.get(&chain)
     }
 
-    pub fn get_mut(&mut self, chain: ChainIndex) -> Option<&mut PackBlockChain> {
+    pub(crate) fn get_mut(&mut self, chain: ChainIndex) -> Option<&mut PackBlockChain> {
         self.chains.get_mut(&chain)
     }
 
     /// Resolves a path from the specified chain to a parent chain and the entry
     /// Returns Ok(None) if the path is empty, otherwise (blockchain,
     /// entry_index, entry)
-    pub fn resolve_path_to_entry_and_parent(
+    pub(crate) fn resolve_path_to_entry_and_parent(
         &self,
         current_chain: ChainIndex,
         path: &Path,
@@ -85,7 +82,7 @@ impl BlockManager {
 
     /// Resolves a path to a [`PackBlockChain`] index starting from the given
     /// blockchain returning the index of the last blockchain.
-    pub fn resolve_path_to_block_chain_index_at(
+    pub(crate) fn resolve_path_to_block_chain_index_at(
         &self,
         current_chain: ChainIndex,
         path: &Path,
@@ -102,7 +99,7 @@ impl BlockManager {
     /// Traverses the path until it hits a non-existent component and returns
     /// the rest of the path as well as the chain index of the last valid part.
     /// FIXME: This function is possibly broken for directories that are nesed.
-    pub fn validate_dir_path_until<'p>(
+    pub(crate) fn validate_dir_path_until<'p>(
         &self,
         mut chain: ChainIndex,
         path: &'p Path,

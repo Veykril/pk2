@@ -114,7 +114,7 @@ impl<'pk2> File<'pk2> {
     }
 
     #[inline]
-    fn pos_data_and_size(&self) -> (ChainIndex, u32) {
+    fn pos_data_and_size(&self) -> (u64, u32) {
         match *self.entry() {
             PackEntry::File { pos_data, size, .. } => (pos_data, size),
             _ => unreachable!(),

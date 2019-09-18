@@ -10,7 +10,7 @@ use crate::FILETIME;
 
 /// An entry of a [`PackBlock`].
 #[derive(Clone, Eq, PartialEq)]
-pub enum PackEntry {
+pub(crate) enum PackEntry {
     Empty {
         next_block: Option<NonZeroU64>,
     },
@@ -27,7 +27,7 @@ pub enum PackEntry {
         access_time: FILETIME,
         create_time: FILETIME,
         modify_time: FILETIME,
-        pos_data: ChainIndex,
+        pos_data: u64,
         size: u32,
         next_block: Option<NonZeroU64>,
     },
@@ -40,7 +40,7 @@ impl Default for PackEntry {
 }
 
 impl PackEntry {
-    pub fn new_directory(
+    pub(crate) fn new_directory(
         name: String,
         pos_children: ChainIndex,
         next_block: Option<NonZeroU64>,
@@ -65,9 +65,9 @@ impl PackEntry {
         }
     }
 
-    pub fn new_file(
+    pub(crate) fn new_file(
         name: String,
-        pos_data: ChainIndex,
+        pos_data: u64,
         size: u32,
         next_block: Option<NonZeroU64>,
     ) -> Self {
@@ -82,7 +82,7 @@ impl PackEntry {
         }
     }
 
-    pub fn next_block(&self) -> Option<NonZeroU64> {
+    pub(crate) fn next_block(&self) -> Option<NonZeroU64> {
         match *self {
             PackEntry::Empty { next_block }
             | PackEntry::Directory { next_block, .. }
@@ -90,7 +90,7 @@ impl PackEntry {
         }
     }
 
-    pub fn set_next_block(&mut self, nc: ChainIndex) {
+    pub(crate) fn set_next_block(&mut self, nc: u64) {
         match self {
             PackEntry::Empty { .. } => (),
             PackEntry::Directory {
@@ -102,7 +102,7 @@ impl PackEntry {
         }
     }
 
-    pub fn name(&self) -> Option<&str> {
+    pub(crate) fn name(&self) -> Option<&str> {
         match self {
             PackEntry::Empty { .. } => None,
             PackEntry::Directory { name, .. } | PackEntry::File { name, .. } => Some(name),
@@ -110,7 +110,7 @@ impl PackEntry {
     }
 
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         match self {
             PackEntry::Empty { .. } => true,
             _ => false,
@@ -118,7 +118,7 @@ impl PackEntry {
     }
 
     #[inline]
-    pub fn is_file(&self) -> bool {
+    pub(crate) fn is_file(&self) -> bool {
         match self {
             PackEntry::File { .. } => true,
             _ => false,
@@ -126,7 +126,7 @@ impl PackEntry {
     }
 
     #[inline]
-    pub fn is_dir(&self) -> bool {
+    pub(crate) fn is_dir(&self) -> bool {
         match self {
             PackEntry::Directory { .. } => true,
             _ => false,
@@ -136,7 +136,7 @@ impl PackEntry {
 
 impl PackEntry {
     // Will always seek to the end of the entry
-    pub fn from_reader<R: Read>(mut r: R) -> Result<Self> {
+    pub(crate) fn from_reader<R: Read>(mut r: R) -> Result<Self> {
         match r.read_u8()? {
             0 => {
                 r.read_exact(&mut [0; PK2_FILE_ENTRY_SIZE - 1])?; //seek to end of entry
@@ -178,7 +178,7 @@ impl PackEntry {
                         access_time,
                         create_time,
                         modify_time,
-                        pos_children: position,
+                        pos_children: ChainIndex(position),
                         next_block,
                     }
                 } else {
@@ -200,7 +200,7 @@ impl PackEntry {
         }
     }
 
-    pub fn to_writer<W: Write>(&self, mut w: W) -> Result<()> {
+    pub(crate) fn to_writer<W: Write>(&self, mut w: W) -> Result<()> {
         match self {
             PackEntry::Empty { next_block } => {
                 w.write_all(&[0; PK2_FILE_ENTRY_SIZE - 8])?;
@@ -211,7 +211,7 @@ impl PackEntry {
                 access_time,
                 create_time,
                 modify_time,
-                pos_children: position,
+                pos_children: ChainIndex(position),
                 next_block,
             }
             | PackEntry::File {

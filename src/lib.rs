@@ -8,7 +8,8 @@ pub use self::archive::Pk2;
 mod phys_file;
 pub(crate) use self::phys_file::PhysicalFile;
 
-pub(crate) type ChainIndex = u64;
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct ChainIndex(pub u64);
 pub(crate) type Blowfish =
     block_modes::Ecb<blowfish::BlowfishLE, block_modes::block_padding::ZeroPadding>;
 
@@ -38,7 +39,8 @@ pub(crate) mod constants {
     pub const PK2_FILE_BLOCK_SIZE: usize =
         mem::size_of::<[RawPackFileEntry; PK2_FILE_BLOCK_ENTRY_COUNT]>();
 
-    pub const PK2_ROOT_BLOCK: ChainIndex = mem::size_of::<RawPackHeader>() as ChainIndex;
+    pub(crate) const PK2_ROOT_BLOCK: ChainIndex =
+        ChainIndex(mem::size_of::<RawPackHeader>() as u64);
 
     #[repr(packed)]
     pub struct RawPackHeader {
@@ -58,7 +60,7 @@ pub(crate) mod constants {
         modify: FILETIME,
         position: u64, // Position of data for files, position of children for directorys
         size: u32,
-        next_block: ChainIndex,
+        next_block: u64,
         _padding: [u8; 2],
     }
 }
