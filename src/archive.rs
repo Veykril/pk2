@@ -70,9 +70,10 @@ impl BorrowFlags {
 pub struct Pk2 {
     header: PackHeader,
     pub(crate) file: PhysicalFile,
-    // we'll make sure to uphold runtime borrow rules, this is needed to allow borrowing file names and such.
-    // This will be fine given that blocks can only move in memory through mutating operations on themselves
-    // which cannot work if their name or anything similar is borrowed.
+    // we'll make sure to uphold runtime borrow rules, this is needed to allow borrowing file names
+    // and such. This will be fine given that blocks can only move in memory through mutating
+    // operations on themselves which cannot work if their name or anything similar is
+    // borrowed.
     pub(crate) block_mgr: UnsafeCell<BlockManager>,
     borrow_map: RefCell<HashMap<(ChainIndex, usize), BorrowFlags>>,
 }
@@ -252,19 +253,20 @@ impl Pk2 {
             .map(ToOwned::to_owned)
             .ok_or_else(|| err_not_found("todo".into()))?;
         let entry = self.get_entry_mut(chain, entry_idx).unwrap();
-        *entry = PackEntry::new_file(file_name, 0, 0, entry.next_chain());
+        *entry = PackEntry::new_file(file_name, 0, 0, entry.next_block());
         File::new_write(self, chain, entry_idx)
     }
 
-    /// Currently only replaces the entry with an empty one making the data inaccessible by normal means
+    /// Currently only replaces the entry with an empty one making the data
+    /// inaccessible by normal means
     pub fn delete_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         let (chain, entry_idx, entry) = self.root_resolve_path_to_entry_and_parent(path)?.unwrap();
         Self::is_file(entry)?;
-        let next_chain = entry.next_chain();
+        let next_block = entry.next_block();
         let entry = self.get_entry_mut(chain.chain_index(), entry_idx).unwrap();
         self.file
             .write_entry_at(chain.file_offset_for_entry(entry_idx).unwrap(), entry)?;
-        *entry = PackEntry::Empty { next_chain };
+        *entry = PackEntry::Empty { next_block };
         Ok(())
     }
 
@@ -283,9 +285,10 @@ impl Pk2 {
 
 impl Pk2 {
     /// This function traverses the whole path creating anything that does not
-    /// yet exist returning last created entry. This means using parent and current dir parts in a path
-    /// that in the end directs to an already existing path might still create new directories.
-    /// TODO: Experiment with a recursive version to avoid borrowck?
+    /// yet exist returning last the created entry. This means using parent and
+    /// current dir parts in a path that in the end directs to an already
+    /// existing path might still create new directories. TODO: Experiment
+    /// with a recursive version to avoid borrowck?
     fn create_entry_at(&mut self, chain: ChainIndex, path: &Path) -> Result<(ChainIndex, usize)> {
         let block_manager = unsafe { &mut *self.block_mgr.get() };
         let (mut current_chain_index, path) = block_manager.validate_dir_path_until(chain, path)?;
@@ -303,7 +306,7 @@ impl Pk2 {
                             block.offset = new_block_offset;
                             self.file.write_block(&block)?;
                             let last_idx = current_chain.entries_mut().count() - 1;
-                            current_chain[last_idx].set_next_chain(new_block_offset);
+                            current_chain[last_idx].set_next_block(new_block_offset);
                             self.file.write_entry_at(
                                 current_chain.file_offset_for_entry(last_idx).unwrap(),
                                 &current_chain[last_idx],
@@ -319,7 +322,7 @@ impl Pk2 {
                         *entry = PackEntry::new_directory(
                             p.to_str().unwrap().to_owned(),
                             new_chain_offset,
-                            entry.next_chain(),
+                            entry.next_block(),
                         );
                         let offset = current_chain.file_offset_for_entry(idx).unwrap();
                         let mut block = PackBlock::default();
@@ -355,7 +358,6 @@ impl Pk2 {
 }
 
 fn create_blowfish(key: &[u8]) -> Result<Blowfish> {
-    // fixme
     let mut key = key.to_vec();
     gen_final_blowfish_key_inplace(&mut key);
     Blowfish::new_varkey(&key)

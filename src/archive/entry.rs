@@ -8,10 +8,11 @@ use crate::constants::PK2_FILE_ENTRY_SIZE;
 use crate::ChainIndex;
 use crate::FILETIME;
 
+/// An entry of a [`PackBlock`].
 #[derive(Clone, Eq, PartialEq)]
 pub enum PackEntry {
     Empty {
-        next_chain: Option<NonZeroU64>,
+        next_block: Option<NonZeroU64>,
     },
     Directory {
         name: String,
@@ -19,7 +20,7 @@ pub enum PackEntry {
         create_time: FILETIME,
         modify_time: FILETIME,
         pos_children: ChainIndex,
-        next_chain: Option<NonZeroU64>,
+        next_block: Option<NonZeroU64>,
     },
     File {
         name: String,
@@ -28,13 +29,13 @@ pub enum PackEntry {
         modify_time: FILETIME,
         pos_data: ChainIndex,
         size: u32,
-        next_chain: Option<NonZeroU64>,
+        next_block: Option<NonZeroU64>,
     },
 }
 
 impl Default for PackEntry {
     fn default() -> Self {
-        PackEntry::Empty { next_chain: None }
+        PackEntry::Empty { next_block: None }
     }
 }
 
@@ -42,7 +43,7 @@ impl PackEntry {
     pub fn new_directory(
         name: String,
         pos_children: ChainIndex,
-        next_chain: Option<NonZeroU64>,
+        next_block: Option<NonZeroU64>,
     ) -> Self {
         PackEntry::Directory {
             name,
@@ -60,7 +61,7 @@ impl PackEntry {
                 dwHighDateTime: 0xB8BF,
             },
             pos_children,
-            next_chain,
+            next_block,
         }
     }
 
@@ -68,7 +69,7 @@ impl PackEntry {
         name: String,
         pos_data: ChainIndex,
         size: u32,
-        next_chain: Option<NonZeroU64>,
+        next_block: Option<NonZeroU64>,
     ) -> Self {
         PackEntry::File {
             name,
@@ -77,34 +78,27 @@ impl PackEntry {
             modify_time: Default::default(),
             pos_data,
             size,
-            next_chain,
+            next_block,
         }
     }
 
-    pub fn pos_children(&self) -> Option<ChainIndex> {
+    pub fn next_block(&self) -> Option<NonZeroU64> {
         match *self {
-            PackEntry::Directory { pos_children, .. } => Some(pos_children),
-            _ => None,
+            PackEntry::Empty { next_block }
+            | PackEntry::Directory { next_block, .. }
+            | PackEntry::File { next_block, .. } => next_block,
         }
     }
 
-    pub fn next_chain(&self) -> Option<NonZeroU64> {
-        match *self {
-            PackEntry::Empty { next_chain }
-            | PackEntry::Directory { next_chain, .. }
-            | PackEntry::File { next_chain, .. } => next_chain,
-        }
-    }
-
-    pub fn set_next_chain(&mut self, nc: ChainIndex) {
+    pub fn set_next_block(&mut self, nc: ChainIndex) {
         match self {
             PackEntry::Empty { .. } => (),
             PackEntry::Directory {
-                ref mut next_chain, ..
+                ref mut next_block, ..
             }
             | PackEntry::File {
-                ref mut next_chain, ..
-            } => *next_chain = NonZeroU64::new(nc),
+                ref mut next_block, ..
+            } => *next_block = NonZeroU64::new(nc),
         }
     }
 
@@ -115,6 +109,7 @@ impl PackEntry {
         }
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         match self {
             PackEntry::Empty { .. } => true,
@@ -122,6 +117,7 @@ impl PackEntry {
         }
     }
 
+    #[inline]
     pub fn is_file(&self) -> bool {
         match self {
             PackEntry::File { .. } => true,
@@ -129,6 +125,7 @@ impl PackEntry {
         }
     }
 
+    #[inline]
     pub fn is_dir(&self) -> bool {
         match self {
             PackEntry::Directory { .. } => true,
@@ -143,7 +140,7 @@ impl PackEntry {
         match r.read_u8()? {
             0 => {
                 r.read_exact(&mut [0; PK2_FILE_ENTRY_SIZE - 1])?; //seek to end of entry
-                Ok(PackEntry::Empty { next_chain: None })
+                Ok(PackEntry::Empty { next_block: None })
             }
             ty @ 1 | ty @ 2 => {
                 let name = {
@@ -172,7 +169,7 @@ impl PackEntry {
                 };
                 let position = r.read_u64::<LE>()?;
                 let size = r.read_u32::<LE>()?;
-                let next_chain = NonZeroU64::new(r.read_u64::<LE>()?);
+                let next_block = NonZeroU64::new(r.read_u64::<LE>()?);
                 r.read_u16::<LE>()?; //padding
 
                 Ok(if ty == 1 {
@@ -182,7 +179,7 @@ impl PackEntry {
                         create_time,
                         modify_time,
                         pos_children: position,
-                        next_chain,
+                        next_block,
                     }
                 } else {
                     PackEntry::File {
@@ -192,7 +189,7 @@ impl PackEntry {
                         modify_time,
                         pos_data: position,
                         size,
-                        next_chain,
+                        next_block,
                     }
                 })
             }
@@ -205,9 +202,9 @@ impl PackEntry {
 
     pub fn to_writer<W: Write>(&self, mut w: W) -> Result<()> {
         match self {
-            PackEntry::Empty { next_chain } => {
+            PackEntry::Empty { next_block } => {
                 w.write_all(&[0; PK2_FILE_ENTRY_SIZE - 8])?;
-                w.write_u64::<LE>(next_chain.map_or(0, |nc| nc.get()))
+                w.write_u64::<LE>(next_block.map_or(0, |nc| nc.get()))
             }
             PackEntry::Directory {
                 name,
@@ -215,7 +212,7 @@ impl PackEntry {
                 create_time,
                 modify_time,
                 pos_children: position,
-                next_chain,
+                next_block,
             }
             | PackEntry::File {
                 name,
@@ -223,7 +220,7 @@ impl PackEntry {
                 create_time,
                 modify_time,
                 pos_data: position,
-                next_chain,
+                next_block,
                 ..
             } => {
                 w.write_u8(if self.is_dir() { 1 } else { 2 })?;
@@ -242,7 +239,7 @@ impl PackEntry {
                 } else {
                     0
                 })?;
-                w.write_u64::<LE>(next_chain.map_or(0, |nc| nc.get()))?;
+                w.write_u64::<LE>(next_block.map_or(0, |nc| nc.get()))?;
                 w.write_u16::<LE>(0)?;
                 Ok(())
             }

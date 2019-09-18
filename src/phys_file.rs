@@ -60,7 +60,8 @@ impl PhysicalFile {
         file.write_all(&buf)
     }
 
-    /// Write data to the end of the file returning the offset of the written data in the file.
+    /// Write data to the end of the file returning the offset of the written
+    /// data in the file.
     pub fn write_new_data_buffer(&self, data: &[u8]) -> Result<u64> {
         let mut file = self.file.borrow_mut();
         let file_end = file.seek(SeekFrom::End(0))?;
@@ -90,7 +91,6 @@ impl PhysicalFile {
         file.seek(SeekFrom::Start(offset))?;
         file.read_exact(&mut buf)?;
         self.decrypt(&mut buf);
-        //std::fs::write(&format!("{:?}.block", offset), &buf[..]).unwrap();
         PackBlock::from_reader(&buf[..], offset)
     }
 

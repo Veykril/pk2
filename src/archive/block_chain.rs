@@ -6,8 +6,11 @@ use crate::archive::err_not_found;
 use crate::constants::*;
 use crate::ChainIndex;
 
+/// A collection of [`PackBlock`]s where each blocks next_block field points to
+/// the following block in the file.
 pub struct PackBlockChain {
-    // the blocks are boxed to prevent reallocations of the vec from moving them, this would invalidate outstanding references
+    // the blocks are boxed to prevent reallocations of the vec from moving them, this would
+    // invalidate outstanding references
     blocks: Vec<Box<PackBlock>>,
 }
 
@@ -40,35 +43,41 @@ impl PackBlockChain {
             })
     }
 
-    /// Fetches the first empty pack entry in this chain
+    /// Fetches the first empty pack entry in this chain, returning its index in
+    /// this chain and a mutable reference to it.
     pub fn find_first_empty_mut(&mut self) -> Option<(usize, &mut PackEntry)> {
         self.entries_mut()
             .enumerate()
             .find(|(_, entry)| entry.is_empty())
     }
 
+    /// An iterator over the entries of this chain.
     pub fn entries(&self) -> impl Iterator<Item = &PackEntry> {
         self.blocks.iter().flat_map(|block| &block.entries)
     }
 
+    /// An iterator over the entries of this chain.
     pub fn entries_mut(&mut self) -> impl Iterator<Item = &mut PackEntry> {
         self.blocks.iter_mut().flat_map(|block| &mut block.entries)
     }
 
+    /// Get the PackEntry at the specified offset.
     pub fn get(&self, entry: usize) -> Option<&PackEntry> {
         self.blocks
             .get(entry / PK2_FILE_BLOCK_ENTRY_COUNT)
             .and_then(|block| block.get(entry % PK2_FILE_BLOCK_ENTRY_COUNT))
     }
 
+    /// Get the PackEntry at the specified offset.
     pub fn get_mut(&mut self, entry: usize) -> Option<&mut PackEntry> {
         self.blocks
             .get_mut(entry / PK2_FILE_BLOCK_ENTRY_COUNT)
             .and_then(|block| block.get_mut(entry % PK2_FILE_BLOCK_ENTRY_COUNT))
     }
 
-    /// Looks up the `directory` name in this [`PackBlockChain`], returning the offset of the
-    /// ['PackBlockChain'] corresponding to the directory if successful.
+    /// Looks up the `directory` name in this [`PackBlockChain`], returning the
+    /// offset of the ['PackBlockChain'] corresponding to the directory if
+    /// successful.
     pub fn find_block_chain_index_of(&self, directory: &str) -> Result<ChainIndex> {
         for entry in self.entries() {
             if entry.name() == Some(directory) {
@@ -99,10 +108,11 @@ impl ops::IndexMut<usize> for PackBlockChain {
     }
 }
 
+/// A collection of 20 [`PackEntry`]s.
 #[derive(Default)]
 pub struct PackBlock {
     pub offset: ChainIndex,
-    pub entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT],
+    entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT],
 }
 
 impl PackBlock {
@@ -123,6 +133,11 @@ impl PackBlock {
             entry.to_writer(&mut w)?;
         }
         Ok(())
+    }
+
+    #[inline]
+    pub fn entries(&self) -> std::slice::Iter<PackEntry> {
+        self.entries.iter()
     }
 
     pub fn get(&self, entry: usize) -> Option<&PackEntry> {

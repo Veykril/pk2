@@ -9,8 +9,8 @@ pub struct File<'pk2> {
     chain: ChainIndex,
     entry_index: usize,
     seek_pos: usize,
-    // is some only if this file has been written to
-    // in the case it is some it will have copied the actual data inside of the archive
+    // is some only if this file is writeable
+    // in the case it is a non-empty Vec it will have copied the actual data inside of the archive
     data: Option<Vec<u8>>,
 }
 
@@ -155,6 +155,7 @@ impl Read for File<'_> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         if buf.is_empty() {
             Ok(0)
+        // we've got the data in our buffer so read it from there
         } else if let Some(data) = self.data.as_ref() {
             let len = (data.len() - self.seek_pos).min(buf.len());
             buf[..len].copy_from_slice(&data[self.seek_pos..self.seek_pos + len]);
@@ -190,7 +191,9 @@ impl Write for File<'_> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         let (pos_data, size) = self.pos_data_and_size();
         if let Some(data) = self.data.as_mut() {
-            if data.is_empty() {
+            // our buffer is empty so read out the actual file contents and place them into
+            // our buffer so they wont get lost
+            if data.is_empty() && size > 0 {
                 let mut file = self.archive.file.file();
                 file.seek(SeekFrom::Start(pos_data))?;
                 (&mut *file).take(size.into()).read_to_end(data)?;
@@ -215,6 +218,7 @@ impl Write for File<'_> {
     fn flush(&mut self) -> io::Result<()> {
         if let Some(data) = self.data.as_ref() {
             let (file_data_pos, file_data_size) =
+                // cant use `entry_mut` since this would borrow all of self for the whole scope
                 match self.archive.get_entry_mut(self.chain, self.entry_index) {
                     Some(PackEntry::File { pos_data, size, .. }) => (pos_data, size),
                     _ => panic!("invalid file object, this is a bug"),
@@ -280,16 +284,17 @@ impl<'pk2> Directory<'pk2> {
             .expect("invalid dir object, this is a bug")
     }
 
-    #[inline]
     fn pos_children(&self) -> ChainIndex {
-        self.entry().pos_children().unwrap()
+        match self.entry() {
+            PackEntry::Directory { pos_children, .. } => *pos_children,
+            _ => unreachable!(),
+        }
     }
 
     pub fn name(&self) -> &str {
-        if let PackEntry::Directory { name, .. } = self.entry() {
-            name
-        } else {
-            unreachable!()
+        match self.entry() {
+            PackEntry::Directory { name, .. } => name,
+            _ => unreachable!(),
         }
     }
 
@@ -341,7 +346,8 @@ impl<'pk2> Directory<'pk2> {
             })
     }
 
-    /// Returns an iterator over all file items in this directory with files being opened as writable.
+    /// Returns an iterator over all file items in this directory with files
+    /// being opened as writable.
     pub fn entries_mut(&'pk2 self) -> impl Iterator<Item = Result<DirEntry<'pk2>>> {
         let chain = self.pos_children();
         self.archive

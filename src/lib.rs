@@ -58,7 +58,7 @@ pub(crate) mod constants {
         modify: FILETIME,
         position: u64, // Position of data for files, position of children for directorys
         size: u32,
-        next_chain: ChainIndex,
+        next_block: ChainIndex,
         _padding: [u8; 2],
     }
 }
