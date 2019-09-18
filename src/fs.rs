@@ -6,7 +6,9 @@ use crate::FILETIME;
 
 pub struct File<'pk2> {
     archive: &'pk2 Pk2,
+    // the chain this file resides in
     chain: ChainIndex,
+    // the index of this file in the chain
     entry_index: usize,
     seek_pos: usize,
     // is some only if this file is writeable
@@ -243,13 +245,9 @@ impl Write for File<'_> {
                 .get_chain(self.chain)
                 .and_then(|chain| chain.file_offset_for_entry(self.entry_index))
                 .unwrap();
-            self.archive.file.write_entry_at(
-                entry_offset,
-                &self
-                    .archive
-                    .get_entry(self.chain, self.entry_index)
-                    .unwrap(),
-            )?;
+            self.archive
+                .file
+                .write_entry_at(entry_offset, self.entry())?;
         }
         Ok(())
     }
@@ -268,6 +266,7 @@ pub struct Directory<'pk2> {
     entry_index: usize,
 }
 
+use crate::archive::PackBlockChain;
 impl<'pk2> Directory<'pk2> {
     pub(in crate) fn new(archive: &'pk2 Pk2, chain: ChainIndex, entry_index: usize) -> Self {
         Directory {
@@ -282,6 +281,14 @@ impl<'pk2> Directory<'pk2> {
         self.archive
             .get_entry(self.chain, self.entry_index)
             .expect("invalid dir object, this is a bug")
+    }
+
+    // returns the chain this folder represents
+    #[inline]
+    fn dir_chain(&self, chain: ChainIndex) -> &PackBlockChain {
+        self.archive
+            .get_chain(chain)
+            .expect("folder pointed to an invalid chain, this is a bug")
     }
 
     fn pos_children(&self) -> ChainIndex {
@@ -300,9 +307,7 @@ impl<'pk2> Directory<'pk2> {
 
     pub fn files(&'pk2 self) -> impl Iterator<Item = Result<File<'pk2>>> {
         let chain = self.pos_children();
-        self.archive
-            .get_chain(chain)
-            .unwrap()
+        self.dir_chain(chain)
             .entries()
             .enumerate()
             .flat_map(move |(idx, entry)| match entry {
@@ -313,9 +318,7 @@ impl<'pk2> Directory<'pk2> {
 
     pub fn files_mut(&'pk2 self) -> impl Iterator<Item = Result<File<'pk2>>> {
         let chain = self.pos_children();
-        self.archive
-            .get_chain(chain)
-            .unwrap()
+        self.dir_chain(chain)
             .entries()
             .enumerate()
             .flat_map(move |(idx, entry)| match entry {
@@ -327,9 +330,7 @@ impl<'pk2> Directory<'pk2> {
     /// Returns an iterator over all file items in this directory.
     pub fn entries(&'pk2 self) -> impl Iterator<Item = Result<DirEntry<'pk2>>> {
         let chain = self.pos_children();
-        self.archive
-            .get_chain(chain)
-            .unwrap()
+        self.dir_chain(chain)
             .entries()
             .enumerate()
             .flat_map(move |(idx, entry)| match entry {
@@ -350,9 +351,7 @@ impl<'pk2> Directory<'pk2> {
     /// being opened as writable.
     pub fn entries_mut(&'pk2 self) -> impl Iterator<Item = Result<DirEntry<'pk2>>> {
         let chain = self.pos_children();
-        self.archive
-            .get_chain(chain)
-            .unwrap()
+        self.dir_chain(chain)
             .entries()
             .enumerate()
             .flat_map(move |(idx, entry)| match entry {

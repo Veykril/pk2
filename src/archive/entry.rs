@@ -195,7 +195,7 @@ impl PackEntry {
             }
             ty => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Unknown PackFileEntry type {}", ty),
+                format!("unknown PackFileEntry type {}", ty),
             )),
         }
     }

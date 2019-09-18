@@ -20,6 +20,37 @@ pub struct FILETIME {
     dwHighDateTime: u32,
 }
 
+pub(crate) mod error {
+    use std::io;
+    #[inline]
+    pub fn err_dir_found_exp_file() -> io::Error {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "found directory where file was expected",
+        )
+    }
+    #[inline]
+    pub fn err_file_found_exp_dir() -> io::Error {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "found file where directory was expected",
+        )
+    }
+
+    #[inline]
+    pub fn err_invalid_chain() -> io::Error {
+        io::Error::new(io::ErrorKind::InvalidData, "invalid chain index")
+    }
+
+    #[inline]
+    pub fn err_path_non_unicode() -> io::Error {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "path didn't contain valid unicode",
+        )
+    }
+}
+
 /// Magic Numbers and definitions
 #[allow(dead_code)]
 pub(crate) mod constants {

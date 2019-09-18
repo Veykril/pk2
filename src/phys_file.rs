@@ -10,12 +10,14 @@ use crate::Blowfish;
 
 pub(crate) struct PhysicalFile {
     file: RefCell<File>,
+    // UnsafeCell is being used here due to the blowfish lib requiring mutability, we don't lend
+    // out borrows for more than a function call though so this is fine
     bf: Option<UnsafeCell<Blowfish>>,
 }
 
 impl Drop for PhysicalFile {
     fn drop(&mut self) {
-        let len = self.len().unwrap() as usize;
+        let len = self.len().unwrap_or(0) as usize;
         // Apparently 4kb is the minimum archive size that the dll requires
         if len < 4096 {
             let _ = self.file.borrow_mut().write_all(&[0; 4096][..4096 - len]);

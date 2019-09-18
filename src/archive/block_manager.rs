@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::io::{self, Result};
 use std::path::{Component, Path};
 
-use crate::archive::{err_not_found, PackBlockChain, PackEntry};
+use crate::archive::{PackBlockChain, PackEntry};
 use crate::constants::PK2_ROOT_BLOCK;
+use crate::error::*;
 use crate::ChainIndex;
 use crate::PhysicalFile;
 
@@ -73,7 +74,12 @@ impl BlockManager {
                 .entries()
                 .enumerate()
                 .find(|(_, entry)| entry.name() == name)
-                .ok_or_else(|| err_not_found(["Unable to find file ", name.unwrap()].join("")))
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        ["file not found: ", name.unwrap_or_default()].concat(),
+                    )
+                })
                 .map(|(idx, entry)| Some((parent, idx, entry)))
         } else {
             Ok(None)
@@ -91,8 +97,11 @@ impl BlockManager {
             let comp = component
                 .as_os_str()
                 .to_str()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "erroneous path"))?;
-            self.chains[&idx].find_block_chain_index_of(comp)
+                .ok_or_else(err_path_non_unicode)?;
+            self.chains
+                .get(&idx)
+                .ok_or_else(err_invalid_chain)
+                .and_then(|chain| chain.find_block_chain_index_of(comp))
         })
     }
 
@@ -107,8 +116,16 @@ impl BlockManager {
         let components = path.components();
         let mut n = 0usize;
         for component in components {
-            let name = component.as_os_str().to_str().unwrap();
-            match self.chains[&chain].find_block_chain_index_of(name) {
+            let name = component
+                .as_os_str()
+                .to_str()
+                .ok_or_else(err_path_non_unicode)?;
+            match self
+                .chains
+                .get(&chain)
+                .ok_or_else(err_invalid_chain)
+                .and_then(|chain| chain.find_block_chain_index_of(name))
+            {
                 Ok(i) => {
                     chain = i;
                     n += 1;
@@ -123,9 +140,7 @@ impl BlockManager {
                         break;
                     }
                 }
-                // the current name already exists as a file or something else happened
-                // todo change the StringError("Expected a directory, found a file") error into
-                // something we can match on to change it here
+                // the current name already exists as a file or the chain index was invalid
                 Err(e) => {
                     return Err(e);
                 }

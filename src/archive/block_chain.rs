@@ -2,8 +2,8 @@ use std::io::{self, Read, Result, Write};
 use std::ops;
 
 use crate::archive::entry::PackEntry;
-use crate::archive::err_not_found;
 use crate::constants::*;
+use crate::error::*;
 use crate::ChainIndex;
 
 /// A collection of [`PackBlock`]s where each blocks next_block field points to
@@ -82,15 +82,15 @@ impl PackBlockChain {
             if entry.name() == Some(directory) {
                 return match entry {
                     &PackEntry::Directory { pos_children, .. } => Ok(pos_children),
-                    PackEntry::File { .. } => Err(io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        "found file where directory was expected",
-                    )),
+                    PackEntry::File { .. } => Err(err_file_found_exp_dir()),
                     _ => continue,
                 };
             }
         }
-        Err(err_not_found(["directory not found: ", directory].concat()))
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            ["directory not found: ", directory].concat(),
+        ))
     }
 }
 
