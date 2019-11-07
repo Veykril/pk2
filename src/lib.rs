@@ -10,6 +10,7 @@ pub(crate) use self::phys_file::PhysicalFile;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ChainIndex(pub u64);
+
 pub(crate) type Blowfish =
     block_modes::Ecb<blowfish::BlowfishLE, block_modes::block_padding::ZeroPadding>;
 

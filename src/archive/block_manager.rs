@@ -9,13 +9,13 @@ use crate::ChainIndex;
 use crate::PhysicalFile;
 
 pub(crate) struct BlockManager {
-    pub chains: HashMap<ChainIndex, PackBlockChain>,
+    chains: HashMap<ChainIndex, PackBlockChain, NoHashHasherBuilder>,
 }
 
 impl BlockManager {
     /// Parses the complete index of a pk2 file
     pub(crate) fn new(file: &PhysicalFile) -> Result<Self> {
-        let mut chains = HashMap::new();
+        let mut chains = HashMap::default();
         let mut offsets = vec![PK2_ROOT_BLOCK.0];
         while let Some(offset) = offsets.pop() {
             let block_chain = Self::read_chain_from_file_at(file, offset)?;
@@ -47,12 +47,19 @@ impl BlockManager {
         }
     }
 
+    #[inline]
     pub(crate) fn get(&self, chain: ChainIndex) -> Option<&PackBlockChain> {
         self.chains.get(&chain)
     }
 
+    #[inline]
     pub(crate) fn get_mut(&mut self, chain: ChainIndex) -> Option<&mut PackBlockChain> {
         self.chains.get_mut(&chain)
+    }
+
+    #[inline]
+    pub(crate) fn insert(&mut self, chain: ChainIndex, block: PackBlockChain) {
+        self.chains.insert(chain, block);
     }
 
     /// Resolves a path from the specified chain to a parent chain and the entry
@@ -152,5 +159,32 @@ impl BlockManager {
             components.by_ref().nth(n - 1);
         }
         Ok((chain, components.as_path()))
+    }
+}
+
+#[derive(Default)]
+struct NoHashHasherBuilder;
+impl std::hash::BuildHasher for NoHashHasherBuilder {
+    type Hasher = NoHashHasher;
+    #[inline]
+    fn build_hasher(&self) -> Self::Hasher {
+        NoHashHasher(0)
+    }
+}
+struct NoHashHasher(u64);
+impl std::hash::Hasher for NoHashHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    fn write(&mut self, _: &[u8]) {
+        panic!("ChainIndex has been hashed wrong. This is a bug!");
+    }
+
+    #[inline]
+    fn write_u64(&mut self, chain: u64) {
+        self.0 = chain;
     }
 }

@@ -300,8 +300,7 @@ impl Pk2 {
             match component {
                 Component::Normal(p) => {
                     let current_chain = block_manager
-                        .chains
-                        .get_mut(&current_chain_index)
+                        .get_mut(current_chain_index)
                         .ok_or_else(err_invalid_chain)?;
                     let idx = match current_chain.find_first_empty_mut() {
                         Some((idx, _)) => idx,
@@ -344,7 +343,7 @@ impl Pk2 {
                         );
                         self.file.write_block(&block)?;
                         self.file.write_entry_at(offset, &current_chain[idx])?;
-                        block_manager.chains.insert(
+                        block_manager.insert(
                             new_chain_offset,
                             PackBlockChain::from_blocks(vec![Box::new(block)]),
                         );
