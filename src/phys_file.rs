@@ -2,10 +2,11 @@ use block_modes::BlockMode;
 
 use std::cell::{RefCell, UnsafeCell};
 use std::fs::File;
-use std::io::{Read, Result, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 
 use crate::archive::{PackBlock, PackEntry};
 use crate::constants::{PK2_FILE_BLOCK_SIZE, PK2_FILE_ENTRY_SIZE};
+use crate::error::Pk2Result;
 use crate::Blowfish;
 
 pub(crate) struct PhysicalFile {
@@ -33,8 +34,11 @@ impl PhysicalFile {
         }
     }
 
-    pub(crate) fn len(&self) -> Result<u64> {
-        self.file.borrow_mut().seek(SeekFrom::End(0))
+    pub(crate) fn len(&self) -> Pk2Result<u64> {
+        self.file
+            .borrow_mut()
+            .seek(SeekFrom::End(0))
+            .map_err(Into::into)
     }
 
     #[inline]
@@ -53,31 +57,32 @@ impl PhysicalFile {
             .map(|bf| unsafe { &mut *bf.get() }.decrypt_nopad(buf));
     }
 
-    pub(crate) fn write_entry_at(&self, offset: u64, entry: &PackEntry) -> Result<()> {
+    pub(crate) fn write_entry_at(&self, offset: u64, entry: &PackEntry) -> io::Result<()> {
         let mut buf = [0; PK2_FILE_ENTRY_SIZE];
         entry.to_writer(&mut buf[..])?;
         self.encrypt(&mut buf);
         let mut file = self.file.borrow_mut();
         file.seek(SeekFrom::Start(offset))?;
-        file.write_all(&buf)
+        file.write_all(&buf)?;
+        Ok(())
     }
 
     /// Write data to the end of the file returning the offset of the written
     /// data in the file.
-    pub(crate) fn write_new_data_buffer(&self, data: &[u8]) -> Result<u64> {
+    pub(crate) fn write_new_data_buffer(&self, data: &[u8]) -> io::Result<u64> {
         let mut file = self.file.borrow_mut();
         let file_end = file.seek(SeekFrom::End(0))?;
         file.write_all(data)?;
         Ok(file_end)
     }
 
-    pub(crate) fn write_data_buffer_at(&self, offset: u64, data: &[u8]) -> Result<()> {
+    pub(crate) fn write_data_buffer_at(&self, offset: u64, data: &[u8]) -> io::Result<()> {
         let mut file = self.file.borrow_mut();
         file.seek(SeekFrom::Start(offset))?;
         file.write_all(data)
     }
 
-    pub(crate) fn write_block(&self, block: &PackBlock) -> Result<()> {
+    pub(crate) fn write_block(&self, block: &PackBlock) -> Pk2Result<()> {
         let mut buf = [0; PK2_FILE_BLOCK_SIZE];
         block.to_writer(&mut buf[..])?;
         self.encrypt(&mut buf);
@@ -87,7 +92,7 @@ impl PhysicalFile {
         Ok(())
     }
 
-    pub(crate) fn read_block_at(&self, offset: u64) -> Result<PackBlock> {
+    pub(crate) fn read_block_at(&self, offset: u64) -> Pk2Result<PackBlock> {
         let mut buf = [0; PK2_FILE_BLOCK_SIZE];
         let mut file = self.file.borrow_mut();
         file.seek(SeekFrom::Start(offset))?;
@@ -103,12 +108,12 @@ impl PhysicalFile {
 
 impl Write for PhysicalFile {
     #[inline]
-    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.file.borrow_mut().write(buf)
     }
 
     #[inline]
-    fn flush(&mut self) -> Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         self.file.borrow_mut().flush()
     }
 }

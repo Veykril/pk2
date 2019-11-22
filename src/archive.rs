@@ -3,11 +3,11 @@ use block_modes::BlockMode;
 use std::cell::{RefCell, UnsafeCell};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
-use std::io::{self, Result};
+use std::io;
 use std::path::{Component, Path};
 
 use crate::constants::*;
-use crate::error::*;
+use crate::error::{Error, Pk2Result};
 use crate::fs::{Directory, File};
 use crate::Blowfish;
 use crate::ChainIndex;
@@ -33,7 +33,7 @@ impl BorrowFlags {
         BorrowFlags(0)
     }
 
-    pub(crate) fn try_borrow(&mut self) -> Result<()> {
+    pub(crate) fn try_borrow(&mut self) -> io::Result<()> {
         match self.0.saturating_add(1) {
             Self::MUT_FLAG => Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -46,7 +46,7 @@ impl BorrowFlags {
         }
     }
 
-    pub(crate) fn try_borrow_mut(&mut self) -> Result<()> {
+    pub(crate) fn try_borrow_mut(&mut self) -> io::Result<()> {
         match self.0 {
             0 => {
                 self.0 = Self::MUT_FLAG;
@@ -80,7 +80,7 @@ pub struct Pk2 {
 }
 
 impl Pk2 {
-    pub fn create<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Result<Self> {
+    pub fn create<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Pk2Result<Self> {
         let file = OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -111,20 +111,14 @@ impl Pk2 {
         })
     }
 
-    pub fn open<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Result<Self> {
+    pub fn open<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Pk2Result<Self> {
         let mut file = OpenOptions::new().write(true).read(true).open(path)?;
         let header = PackHeader::from_reader(&mut file)?;
         if &header.signature != PK2_SIGNATURE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid pak signature: {:?}", header.signature),
-            ));
+            return Err(Error::CorruptedFile);
         }
         if header.version != PK2_VERSION {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid file version: {:X}", header.version),
-            ));
+            return Err(Error::UnsupportedVersion);
         }
 
         let bf = if header.encrypted {
@@ -132,10 +126,7 @@ impl Pk2 {
             let mut checksum = *PK2_CHECKSUM;
             let _ = bf.encrypt_nopad(&mut checksum);
             if checksum[..PK2_CHECKSUM_STORED] != header.verify[..PK2_CHECKSUM_STORED] {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "invalid blowfish key",
-                ));
+                return Err(Error::InvalidKey);
             } else {
                 Some(bf)
             }
@@ -178,12 +169,12 @@ impl Pk2 {
     fn root_resolve_path_to_entry_and_parent<P: AsRef<Path>>(
         &self,
         path: P,
-    ) -> Result<Option<(&PackBlockChain, usize, &PackEntry)>> {
+    ) -> Pk2Result<Option<(&PackBlockChain, usize, &PackEntry)>> {
         unsafe { &mut *self.block_mgr.get() }
             .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)
     }
 
-    pub(crate) fn borrow_file(&self, chain: ChainIndex, entry: usize) -> Result<()> {
+    pub(crate) fn borrow_file(&self, chain: ChainIndex, entry: usize) -> io::Result<()> {
         self.borrow_map
             .borrow_mut()
             .entry((chain, entry))
@@ -191,7 +182,7 @@ impl Pk2 {
             .try_borrow()
     }
 
-    pub(crate) fn borrow_file_mut(&self, chain: ChainIndex, entry: usize) -> Result<()> {
+    pub(crate) fn borrow_file_mut(&self, chain: ChainIndex, entry: usize) -> io::Result<()> {
         self.borrow_map
             .borrow_mut()
             .entry((chain, entry))
@@ -212,33 +203,33 @@ impl Pk2 {
 }
 
 impl Pk2 {
-    fn is_file(entry: &PackEntry) -> Result<()> {
+    fn is_file(entry: &PackEntry) -> Pk2Result<()> {
         match entry.is_file() {
             true => Ok(()),
-            false => Err(err_dir_found_exp_file()),
+            false => Err(Error::ExpectedFile),
         }
     }
 
-    fn is_dir(entry: &PackEntry) -> Result<()> {
+    fn is_dir(entry: &PackEntry) -> Pk2Result<()> {
         match entry.is_dir() {
             true => Ok(()),
-            false => Err(err_file_found_exp_dir()),
+            false => Err(Error::ExpectedDirectory),
         }
     }
 
-    pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<File> {
+    pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Pk2Result<File> {
         let (chain, entry_idx, entry) = self
             .root_resolve_path_to_entry_and_parent(path)
-            .and_then(|opt| opt.ok_or_else(err_dir_found_exp_file))?;
+            .and_then(|opt| opt.ok_or(Error::ExpectedFile))?;
         Self::is_file(entry)?;
         let chain = chain.chain_index();
         File::new_read(self, chain, entry_idx)
     }
 
-    pub fn open_file_mut<P: AsRef<Path>>(&self, path: P) -> Result<File> {
+    pub fn open_file_mut<P: AsRef<Path>>(&self, path: P) -> Pk2Result<File> {
         let (chain, entry_idx, entry) = self
             .root_resolve_path_to_entry_and_parent(path)
-            .and_then(|opt| opt.ok_or_else(err_dir_found_exp_file))?;
+            .and_then(|opt| opt.ok_or(Error::ExpectedFile))?;
         Self::is_file(entry)?;
         let chain = chain.chain_index();
         File::new_write(self, chain, entry_idx)
@@ -246,10 +237,10 @@ impl Pk2 {
 
     /// Currently only replaces the entry with an empty one making the data
     /// inaccessible by normal means
-    pub fn delete_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+    pub fn delete_file<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<()> {
         let (chain, entry_idx, entry) = self
             .root_resolve_path_to_entry_and_parent(path)
-            .and_then(|opt| opt.ok_or_else(err_dir_found_exp_file))?;
+            .and_then(|opt| opt.ok_or(Error::ExpectedFile))?;
         Self::is_file(entry)?;
         let next_block = entry.next_block();
         let entry = self.get_entry_mut(chain.chain_index(), entry_idx).unwrap();
@@ -259,21 +250,21 @@ impl Pk2 {
         Ok(())
     }
 
-    pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> Result<File> {
+    pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<File> {
         use std::ffi::OsStr;
         let path = check_root(path.as_ref())?;
         let file_name = path
             .file_name()
             .and_then(OsStr::to_str)
             .map(ToOwned::to_owned)
-            .ok_or_else(err_path_non_unicode)?;
+            .ok_or(Error::NonUnicodePath)?;
         let (chain, entry_idx) = self.create_entry_at(PK2_ROOT_BLOCK, path)?;
         let entry = self.get_entry_mut(chain, entry_idx).unwrap();
         *entry = PackEntry::new_file(file_name, 0, 0, entry.next_block());
         File::new_write(self, chain, entry_idx)
     }
 
-    pub fn open_directory<P: AsRef<Path>>(&self, path: P) -> Result<Directory> {
+    pub fn open_directory<P: AsRef<Path>>(&self, path: P) -> Pk2Result<Directory> {
         let (chain, entry_idx) = match self.root_resolve_path_to_entry_and_parent(path)? {
             Some((chain, entry_idx, entry)) => {
                 Self::is_dir(entry)?;
@@ -292,7 +283,11 @@ impl Pk2 {
     /// current dir parts in a path that in the end directs to an already
     /// existing path might still create new directories. TODO: Experiment
     /// with a recursive version to avoid borrowck?
-    fn create_entry_at(&mut self, chain: ChainIndex, path: &Path) -> Result<(ChainIndex, usize)> {
+    fn create_entry_at(
+        &mut self,
+        chain: ChainIndex,
+        path: &Path,
+    ) -> Pk2Result<(ChainIndex, usize)> {
         let block_manager = unsafe { &mut *self.block_mgr.get() };
         let (mut current_chain_index, path) = block_manager.validate_dir_path_until(chain, path)?;
         let mut components = path.components().peekable();
@@ -301,7 +296,7 @@ impl Pk2 {
                 Component::Normal(p) => {
                     let current_chain = block_manager
                         .get_mut(current_chain_index)
-                        .ok_or_else(err_invalid_chain)?;
+                        .ok_or(Error::InvalidChainIndex)?;
                     let idx = match current_chain.find_first_empty_mut() {
                         Some((idx, _)) => idx,
                         None => {
@@ -327,7 +322,7 @@ impl Pk2 {
                         *entry = PackEntry::new_directory(
                             p.to_str()
                                 .map(ToOwned::to_owned)
-                                .ok_or_else(err_path_non_unicode)?,
+                                .ok_or(Error::NonUnicodePath)?,
                             new_chain_offset,
                             entry.next_block(),
                         );
@@ -357,18 +352,14 @@ impl Pk2 {
                 _ => unreachable!(),
             }
         }
-        Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "path already exists",
-        ))
+        Err(Error::AlreadyExists)
     }
 }
 
-fn create_blowfish(key: &[u8]) -> Result<Blowfish> {
+fn create_blowfish(key: &[u8]) -> Pk2Result<Blowfish> {
     let mut key = key.to_vec();
     gen_final_blowfish_key_inplace(&mut key);
-    Blowfish::new_varkey(&key)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid key length"))
+    Blowfish::new_varkey(&key).map_err(|_| Error::InvalidKey)
 }
 
 fn gen_final_blowfish_key_inplace(key: &mut [u8]) {
@@ -382,7 +373,6 @@ fn gen_final_blowfish_key_inplace(key: &mut [u8]) {
     }
 }
 
-fn check_root(path: &Path) -> Result<&Path> {
-    path.strip_prefix("/")
-        .map_err(|_| io::Error::new(io::ErrorKind::PermissionDenied, "absolute path expected"))
+fn check_root(path: &Path) -> Pk2Result<&Path> {
+    path.strip_prefix("/").map_err(|_| Error::InvalidPath)
 }

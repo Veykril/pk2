@@ -1,9 +1,9 @@
-use std::io::{self, Read, Result, Write};
+use std::io::{Read, Write};
 use std::ops;
 
 use crate::archive::entry::PackEntry;
 use crate::constants::*;
-use crate::error::*;
+use crate::error::{Error, Pk2Result};
 use crate::ChainIndex;
 
 /// A collection of [`PackBlock`]s where each blocks next_block field points to
@@ -77,20 +77,17 @@ impl PackBlockChain {
     /// Looks up the `directory` name in this [`PackBlockChain`], returning the
     /// offset of the ['PackBlockChain'] corresponding to the directory if
     /// successful.
-    pub(crate) fn find_block_chain_index_of(&self, directory: &str) -> Result<ChainIndex> {
+    pub(crate) fn find_block_chain_index_of(&self, directory: &str) -> Pk2Result<ChainIndex> {
         for entry in self.entries() {
             if entry.name() == Some(directory) {
                 return match entry {
                     &PackEntry::Directory { pos_children, .. } => Ok(pos_children),
-                    PackEntry::File { .. } => Err(err_file_found_exp_dir()),
+                    PackEntry::File { .. } => Err(Error::ExpectedDirectory),
                     _ => continue,
                 };
             }
         }
-        Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            ["directory not found: ", directory].concat(),
-        ))
+        Err(Error::NotFound)
     }
 }
 
@@ -119,7 +116,7 @@ impl PackBlock {
         Self::default()
     }
 
-    pub(crate) fn from_reader<R: Read>(mut r: R, offset: u64) -> Result<Self> {
+    pub(crate) fn from_reader<R: Read>(mut r: R, offset: u64) -> Pk2Result<Self> {
         let mut entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT] = Default::default();
         for entry in &mut entries {
             *entry = PackEntry::from_reader(&mut r)?;
@@ -127,7 +124,7 @@ impl PackBlock {
         Ok(PackBlock { offset, entries })
     }
 
-    pub(crate) fn to_writer<W: Write>(&self, mut w: W) -> Result<()> {
+    pub(crate) fn to_writer<W: Write>(&self, mut w: W) -> Pk2Result<()> {
         for entry in &self.entries {
             entry.to_writer(&mut w)?;
         }

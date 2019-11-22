@@ -1,10 +1,11 @@
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 use encoding_rs::EUC_KR;
 
-use std::io::{self, Read, Result, Write};
+use std::io::{self, Read, Write};
 use std::num::NonZeroU64;
 
 use crate::constants::PK2_FILE_ENTRY_SIZE;
+use crate::error::{Error, Pk2Result};
 use crate::ChainIndex;
 use crate::FILETIME;
 
@@ -136,7 +137,7 @@ impl PackEntry {
 
 impl PackEntry {
     // Will always seek to the end of the entry
-    pub(crate) fn from_reader<R: Read>(mut r: R) -> Result<Self> {
+    pub(crate) fn from_reader<R: Read>(mut r: R) -> Pk2Result<Self> {
         match r.read_u8()? {
             0 => {
                 r.read_exact(&mut [0; PK2_FILE_ENTRY_SIZE - 1])?; //seek to end of entry
@@ -193,18 +194,16 @@ impl PackEntry {
                     }
                 })
             }
-            ty => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unknown PackFileEntry type {}", ty),
-            )),
+            _ => Err(Error::CorruptedFile),
         }
     }
 
-    pub(crate) fn to_writer<W: Write>(&self, mut w: W) -> Result<()> {
+    pub(crate) fn to_writer<W: Write>(&self, mut w: W) -> io::Result<()> {
         match self {
             PackEntry::Empty { next_block } => {
                 w.write_all(&[0; PK2_FILE_ENTRY_SIZE - 8])?;
                 w.write_u64::<LE>(next_block.map_or(0, |nc| nc.get()))
+                    .map_err(Into::into)
             }
             PackEntry::Directory {
                 name,

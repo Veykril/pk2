@@ -1,10 +1,9 @@
 use std::collections::HashMap;
-use std::io::{self, Result};
 use std::path::{Component, Path};
 
 use crate::archive::{PackBlockChain, PackEntry};
 use crate::constants::PK2_ROOT_BLOCK;
-use crate::error::*;
+use crate::error::{Error, Pk2Result};
 use crate::ChainIndex;
 use crate::PhysicalFile;
 
@@ -14,7 +13,7 @@ pub(crate) struct BlockManager {
 
 impl BlockManager {
     /// Parses the complete index of a pk2 file
-    pub(crate) fn new(file: &PhysicalFile) -> Result<Self> {
+    pub(crate) fn new(file: &PhysicalFile) -> Pk2Result<Self> {
         let mut chains = HashMap::default();
         let mut offsets = vec![PK2_ROOT_BLOCK.0];
         while let Some(offset) = offsets.pop() {
@@ -34,7 +33,7 @@ impl BlockManager {
     /// Reads a [`PackBlockChain`] from the given file at the specified offset.
     /// Note: FIXME Can potentially end up in a neverending loop with a
     /// specially crafted file.
-    fn read_chain_from_file_at(file: &PhysicalFile, mut offset: u64) -> Result<PackBlockChain> {
+    fn read_chain_from_file_at(file: &PhysicalFile, mut offset: u64) -> Pk2Result<PackBlockChain> {
         let mut blocks = Vec::new();
         loop {
             let block = file.read_block_at(offset)?;
@@ -69,7 +68,7 @@ impl BlockManager {
         &self,
         current_chain: ChainIndex,
         path: &Path,
-    ) -> Result<Option<(&PackBlockChain, usize, &PackEntry)>> {
+    ) -> Pk2Result<Option<(&PackBlockChain, usize, &PackEntry)>> {
         let mut components = path.components();
 
         if let Some(c) = components.next_back() {
@@ -81,12 +80,7 @@ impl BlockManager {
                 .entries()
                 .enumerate()
                 .find(|(_, entry)| entry.name() == name)
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::NotFound,
-                        ["file not found: ", name.unwrap_or_default()].concat(),
-                    )
-                })
+                .ok_or(Error::NotFound)
                 .map(|(idx, entry)| Some((parent, idx, entry)))
         } else {
             Ok(None)
@@ -99,15 +93,15 @@ impl BlockManager {
         &self,
         current_chain: ChainIndex,
         path: &Path,
-    ) -> Result<ChainIndex> {
+    ) -> Pk2Result<ChainIndex> {
         path.components().try_fold(current_chain, |idx, component| {
             let comp = component
                 .as_os_str()
                 .to_str()
-                .ok_or_else(err_path_non_unicode)?;
+                .ok_or(Error::NonUnicodePath)?;
             self.chains
                 .get(&idx)
-                .ok_or_else(err_invalid_chain)
+                .ok_or(Error::InvalidChainIndex)
                 .and_then(|chain| chain.find_block_chain_index_of(comp))
         })
     }
@@ -119,30 +113,27 @@ impl BlockManager {
         &self,
         mut chain: ChainIndex,
         path: &'p Path,
-    ) -> Result<(ChainIndex, &'p Path)> {
+    ) -> Pk2Result<(ChainIndex, &'p Path)> {
         let components = path.components();
         let mut n = 0usize;
         for component in components {
             let name = component
                 .as_os_str()
                 .to_str()
-                .ok_or_else(err_path_non_unicode)?;
+                .ok_or(Error::NonUnicodePath)?;
             match self
                 .chains
                 .get(&chain)
-                .ok_or_else(err_invalid_chain)
+                .ok_or(Error::InvalidChainIndex)
                 .and_then(|chain| chain.find_block_chain_index_of(name))
             {
                 Ok(i) => {
                     chain = i;
                     n += 1;
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
+                Err(Error::NotFound) => {
                     if component == Component::ParentDir {
-                        return Err(io::Error::new(
-                            io::ErrorKind::PermissionDenied,
-                            "The path is a parent of the root directory",
-                        ));
+                        return Err(Error::InvalidPath);
                     } else {
                         break;
                     }

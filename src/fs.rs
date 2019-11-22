@@ -1,6 +1,7 @@
-use std::io::{self, Read, Result, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 
 use crate::archive::{PackEntry, Pk2};
+use crate::error::Pk2Result;
 use crate::ChainIndex;
 use crate::FILETIME;
 
@@ -21,7 +22,7 @@ impl<'pk2> File<'pk2> {
         archive: &'pk2 Pk2,
         chain: ChainIndex,
         entry_index: usize,
-    ) -> Result<Self> {
+    ) -> Pk2Result<Self> {
         archive.borrow_file_mut(chain, entry_index)?;
         Ok(File {
             archive,
@@ -36,7 +37,7 @@ impl<'pk2> File<'pk2> {
         archive: &'pk2 Pk2,
         chain: ChainIndex,
         entry_index: usize,
-    ) -> Result<Self> {
+    ) -> Pk2Result<Self> {
         archive.borrow_file(chain, entry_index)?;
         Ok(File {
             archive,
@@ -125,7 +126,7 @@ impl<'pk2> File<'pk2> {
 }
 
 impl Seek for File<'_> {
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let size = self
             .data
             .as_ref()
@@ -154,7 +155,7 @@ impl Seek for File<'_> {
 }
 
 impl Read for File<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
             Ok(0)
         // we've got the data in our buffer so read it from there
@@ -176,7 +177,7 @@ impl Read for File<'_> {
         }
     }
 
-    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
         let len = buf.len();
         let size = self
             .data
@@ -190,7 +191,7 @@ impl Read for File<'_> {
 }
 
 impl Write for File<'_> {
-    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let (pos_data, size) = self.pos_data_and_size();
         if let Some(data) = self.data.as_mut() {
             // our buffer is empty so read out the actual file contents and place them into
@@ -305,7 +306,7 @@ impl<'pk2> Directory<'pk2> {
         }
     }
 
-    pub fn files(&'pk2 self) -> impl Iterator<Item = Result<File<'pk2>>> {
+    pub fn files(&'pk2 self) -> impl Iterator<Item = Pk2Result<File<'pk2>>> {
         let chain = self.pos_children();
         self.dir_chain(chain)
             .entries()
@@ -316,7 +317,7 @@ impl<'pk2> Directory<'pk2> {
             })
     }
 
-    pub fn files_mut(&'pk2 self) -> impl Iterator<Item = Result<File<'pk2>>> {
+    pub fn files_mut(&'pk2 self) -> impl Iterator<Item = Pk2Result<File<'pk2>>> {
         let chain = self.pos_children();
         self.dir_chain(chain)
             .entries()
@@ -328,7 +329,7 @@ impl<'pk2> Directory<'pk2> {
     }
 
     /// Returns an iterator over all file items in this directory.
-    pub fn entries(&'pk2 self) -> impl Iterator<Item = Result<DirEntry<'pk2>>> {
+    pub fn entries(&'pk2 self) -> impl Iterator<Item = Pk2Result<DirEntry<'pk2>>> {
         let chain = self.pos_children();
         self.dir_chain(chain)
             .entries()
@@ -349,7 +350,7 @@ impl<'pk2> Directory<'pk2> {
 
     /// Returns an iterator over all file items in this directory with files
     /// being opened as writable.
-    pub fn entries_mut(&'pk2 self) -> impl Iterator<Item = Result<DirEntry<'pk2>>> {
+    pub fn entries_mut(&'pk2 self) -> impl Iterator<Item = Pk2Result<DirEntry<'pk2>>> {
         let chain = self.pos_children();
         self.dir_chain(chain)
             .entries()
