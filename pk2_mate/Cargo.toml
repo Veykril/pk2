@@ -1,0 +1,9 @@
+[package]
+name = "pk2_mate"
+version = "0.1.0"
+authors = ["Lukas Wirth <lukastw97@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+pk2 = { path = "../" }
+clap = "2"
