@@ -1,5 +1,5 @@
 #![warn(clippy::all)]
-#![allow(clippy::match_bool, clippy::vec_box)]
+#![allow(clippy::match_bool)]
 pub mod fs;
 
 mod error;

@@ -1,14 +1,11 @@
 use block_modes::BlockMode;
 
-use std::cell::{RefCell, UnsafeCell};
-use std::collections::HashMap;
 use std::fs::OpenOptions;
-use std::io;
 use std::path::{Component, Path};
 
 use crate::constants::*;
 use crate::error::{Error, Pk2Result};
-use crate::fs::{Directory, File};
+use crate::fs::{Directory, File, FileMut};
 use crate::Blowfish;
 use crate::ChainIndex;
 use crate::PhysicalFile;
@@ -23,51 +20,6 @@ pub(crate) use self::block_manager::BlockManager;
 pub(crate) use self::entry::PackEntry;
 pub(crate) use self::header::PackHeader;
 
-// !0 means borrowed mutably
-#[derive(PartialEq)]
-pub(crate) struct BorrowFlags(u32);
-
-impl BorrowFlags {
-    const MUT_FLAG: u32 = !0;
-    fn new() -> Self {
-        BorrowFlags(0)
-    }
-
-    pub(crate) fn try_borrow(&mut self) -> io::Result<()> {
-        match self.0.saturating_add(1) {
-            Self::MUT_FLAG => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "file has already been opened with write access",
-            )),
-            new_flag => {
-                self.0 = new_flag;
-                Ok(())
-            }
-        }
-    }
-
-    pub(crate) fn try_borrow_mut(&mut self) -> io::Result<()> {
-        match self.0 {
-            0 => {
-                self.0 = Self::MUT_FLAG;
-                Ok(())
-            }
-            _ => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "file has been already opened with write or read access",
-            )),
-        }
-    }
-
-    pub(crate) fn drop_borrow(&mut self) -> bool {
-        match self.0 {
-            Self::MUT_FLAG => self.0 = 0,
-            _ => self.0 = self.0.saturating_sub(1),
-        }
-        self.0 == 0
-    }
-}
-
 pub struct Pk2 {
     header: PackHeader,
     pub(crate) file: PhysicalFile,
@@ -75,8 +27,7 @@ pub struct Pk2 {
     // and such. This will be fine given that blocks can only move in memory through mutating
     // operations on themselves which cannot work if their name or anything similar is
     // borrowed.
-    pub(crate) block_mgr: UnsafeCell<BlockManager>,
-    borrow_map: RefCell<HashMap<(ChainIndex, usize), BorrowFlags>>,
+    pub(crate) block_manager: BlockManager,
 }
 
 impl Pk2 {
@@ -102,12 +53,11 @@ impl Pk2 {
         block[0] = PackEntry::new_directory(".".to_owned(), PK2_ROOT_BLOCK, None);
         file.write_block(&block)?;
 
-        let block_mgr = UnsafeCell::new(BlockManager::new(&file)?);
+        let block_manager = BlockManager::new(&file)?;
         Ok(Pk2 {
             header,
             file,
-            block_mgr,
-            borrow_map: RefCell::new(HashMap::new()),
+            block_manager,
         })
     }
 
@@ -134,12 +84,11 @@ impl Pk2 {
             None
         };
         let file = PhysicalFile::new(file, bf);
-        let block_mgr = UnsafeCell::new(BlockManager::new(&file)?);
+        let block_manager = BlockManager::new(&file)?;
         Ok(Pk2 {
             header,
             file,
-            block_mgr,
-            borrow_map: RefCell::new(HashMap::new()),
+            block_manager,
         })
     }
 
@@ -147,21 +96,27 @@ impl Pk2 {
         &self.header
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn get_chain(&self, chain: ChainIndex) -> Option<&PackBlockChain> {
-        unsafe { &*self.block_mgr.get() }.get(chain)
+        self.block_manager.get(chain)
     }
 
-    #[inline]
-    pub(crate) fn get_chain_mut(&self, chain: ChainIndex) -> Option<&mut PackBlockChain> {
-        unsafe { &mut *self.block_mgr.get() }.get_mut(chain)
+    #[inline(always)]
+    pub(crate) fn get_chain_mut(&mut self, chain: ChainIndex) -> Option<&mut PackBlockChain> {
+        self.block_manager.get_mut(chain)
     }
 
+    #[inline(always)]
     pub(crate) fn get_entry(&self, chain: ChainIndex, entry: usize) -> Option<&PackEntry> {
         self.get_chain(chain).and_then(|chain| chain.get(entry))
     }
 
-    pub(crate) fn get_entry_mut(&self, chain: ChainIndex, entry: usize) -> Option<&mut PackEntry> {
+    #[inline(always)]
+    pub(crate) fn get_entry_mut(
+        &mut self,
+        chain: ChainIndex,
+        entry: usize,
+    ) -> Option<&mut PackEntry> {
         self.get_chain_mut(chain)
             .and_then(|chain| chain.get_mut(entry))
     }
@@ -170,35 +125,8 @@ impl Pk2 {
         &self,
         path: P,
     ) -> Pk2Result<Option<(&PackBlockChain, usize, &PackEntry)>> {
-        unsafe { &mut *self.block_mgr.get() }
+        self.block_manager
             .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)
-    }
-
-    pub(crate) fn borrow_file(&self, chain: ChainIndex, entry: usize) -> io::Result<()> {
-        self.borrow_map
-            .borrow_mut()
-            .entry((chain, entry))
-            .or_insert_with(BorrowFlags::new)
-            .try_borrow()
-    }
-
-    pub(crate) fn borrow_file_mut(&self, chain: ChainIndex, entry: usize) -> io::Result<()> {
-        self.borrow_map
-            .borrow_mut()
-            .entry((chain, entry))
-            .or_insert_with(BorrowFlags::new)
-            .try_borrow_mut()
-    }
-
-    pub(crate) fn drop_borrow(&self, chain: ChainIndex, entry: usize) {
-        let mut map = self.borrow_map.borrow_mut();
-        if map
-            .get_mut(&(chain, entry))
-            .map(BorrowFlags::drop_borrow)
-            .unwrap_or(false)
-        {
-            map.remove(&(chain, entry));
-        }
     }
 }
 
@@ -223,16 +151,16 @@ impl Pk2 {
             .and_then(|opt| opt.ok_or(Error::ExpectedFile))?;
         Self::is_file(entry)?;
         let chain = chain.chain_index();
-        File::new_read(self, chain, entry_idx)
+        Ok(File::new(self, chain, entry_idx))
     }
 
-    pub fn open_file_mut<P: AsRef<Path>>(&self, path: P) -> Pk2Result<File> {
+    pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<FileMut> {
         let (chain, entry_idx, entry) = self
             .root_resolve_path_to_entry_and_parent(path)
             .and_then(|opt| opt.ok_or(Error::ExpectedFile))?;
         Self::is_file(entry)?;
         let chain = chain.chain_index();
-        File::new_write(self, chain, entry_idx)
+        Ok(FileMut::new(self, chain, entry_idx))
     }
 
     /// Currently only replaces the entry with an empty one making the data
@@ -243,14 +171,17 @@ impl Pk2 {
             .and_then(|opt| opt.ok_or(Error::ExpectedFile))?;
         Self::is_file(entry)?;
         let next_block = entry.next_block();
-        let entry = self.get_entry_mut(chain.chain_index(), entry_idx).unwrap();
-        self.file
-            .write_entry_at(chain.file_offset_for_entry(entry_idx).unwrap(), entry)?;
-        *entry = PackEntry::Empty { next_block };
+        let chain_index = chain.chain_index();
+        let file_offset = chain.file_offset_for_entry(entry_idx).unwrap();
+        let entry = std::mem::replace(
+            self.get_entry_mut(chain_index, entry_idx).unwrap(),
+            PackEntry::Empty { next_block },
+        );
+        self.file.write_entry_at(file_offset, &entry)?;
         Ok(())
     }
 
-    pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<File> {
+    pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<FileMut> {
         use std::ffi::OsStr;
         let path = check_root(path.as_ref())?;
         let file_name = path
@@ -261,9 +192,8 @@ impl Pk2 {
         let (chain, entry_idx) = self.create_entry_at(PK2_ROOT_BLOCK, path)?;
         let entry = self.get_entry_mut(chain, entry_idx).unwrap();
         *entry = PackEntry::new_file(file_name, 0, 0, entry.next_block());
-        File::new_write(self, chain, entry_idx)
+        Ok(FileMut::new(self, chain, entry_idx))
     }
-
     pub fn open_directory<P: AsRef<Path>>(&self, path: P) -> Pk2Result<Directory> {
         let (chain, entry_idx) = match self.root_resolve_path_to_entry_and_parent(path)? {
             Some((chain, entry_idx, entry)) => {
@@ -288,13 +218,14 @@ impl Pk2 {
         chain: ChainIndex,
         path: &Path,
     ) -> Pk2Result<(ChainIndex, usize)> {
-        let block_manager = unsafe { &mut *self.block_mgr.get() };
-        let (mut current_chain_index, path) = block_manager.validate_dir_path_until(chain, path)?;
+        let (mut current_chain_index, path) =
+            self.block_manager.validate_dir_path_until(chain, path)?;
         let mut components = path.components().peekable();
         while let Some(component) = components.next() {
             match component {
                 Component::Normal(p) => {
-                    let current_chain = block_manager
+                    let current_chain = self
+                        .block_manager
                         .get_mut(current_chain_index)
                         .ok_or(Error::InvalidChainIndex)?;
                     let idx = match current_chain.find_first_empty_mut() {
@@ -338,10 +269,8 @@ impl Pk2 {
                         );
                         self.file.write_block(&block)?;
                         self.file.write_entry_at(offset, &current_chain[idx])?;
-                        block_manager.insert(
-                            new_chain_offset,
-                            PackBlockChain::from_blocks(vec![Box::new(block)]),
-                        );
+                        self.block_manager
+                            .insert(new_chain_offset, PackBlockChain::from_blocks(vec![block]));
                         current_chain_index = new_chain_offset;
                     } else {
                         return Ok((current_chain.chain_index(), idx));

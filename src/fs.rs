@@ -1,7 +1,6 @@
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
 use crate::archive::{PackEntry, Pk2};
-use crate::error::Pk2Result;
 use crate::ChainIndex;
 use crate::FILETIME;
 
@@ -11,41 +10,132 @@ pub struct File<'pk2> {
     chain: ChainIndex,
     // the index of this file in the chain
     entry_index: usize,
-    seek_pos: usize,
-    // is some only if this file is writeable
-    // in the case it is a non-empty Vec it will have copied the actual data inside of the archive
-    data: Option<Vec<u8>>,
+    seek_pos: u64,
 }
 
 impl<'pk2> File<'pk2> {
-    pub(in crate) fn new_write(
-        archive: &'pk2 Pk2,
-        chain: ChainIndex,
-        entry_index: usize,
-    ) -> Pk2Result<Self> {
-        archive.borrow_file_mut(chain, entry_index)?;
-        Ok(File {
+    pub(in crate) fn new(archive: &'pk2 Pk2, chain: ChainIndex, entry_index: usize) -> Self {
+        File {
             archive,
             chain,
             entry_index,
             seek_pos: 0,
-            data: Some(Vec::new()),
-        })
+        }
     }
 
-    pub(in crate) fn new_read(
-        archive: &'pk2 Pk2,
-        chain: ChainIndex,
-        entry_index: usize,
-    ) -> Pk2Result<Self> {
-        archive.borrow_file(chain, entry_index)?;
-        Ok(File {
+    pub fn modify_time(&self) -> FILETIME {
+        match self.entry() {
+            PackEntry::File { modify_time, .. } => *modify_time,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn access_time(&self) -> FILETIME {
+        match self.entry() {
+            PackEntry::File { access_time, .. } => *access_time,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn create_time(&self) -> FILETIME {
+        match self.entry() {
+            PackEntry::File { create_time, .. } => *create_time,
+            _ => unreachable!(),
+        }
+    }
+
+    #[inline]
+    pub fn name(&self) -> &str {
+        match self.entry() {
+            PackEntry::File { name, .. } => name,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn path(&self) -> &str {
+        unimplemented!()
+    }
+
+    #[inline]
+    fn entry(&self) -> &PackEntry {
+        self.archive
+            .get_entry(self.chain, self.entry_index)
+            .expect("invalid file object, this is a bug")
+    }
+
+    #[inline]
+    fn pos_data_and_size(&self) -> (u64, u32) {
+        match *self.entry() {
+            PackEntry::File { pos_data, size, .. } => (pos_data, size),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl Seek for File<'_> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let size = self.pos_data_and_size().1 as u64;
+        let (base_pos, offset) = match pos {
+            SeekFrom::Start(n) => {
+                self.seek_pos = n.min(size);
+                return Ok(self.seek_pos);
+            }
+            SeekFrom::End(n) => (size, n),
+            SeekFrom::Current(n) => (self.seek_pos, n),
+        };
+        let new_pos = base_pos as i64 + offset;
+        if new_pos < 0 {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid seek to a negative position",
+            ))
+        } else {
+            self.seek_pos = size.min(new_pos as u64);
+            Ok(self.seek_pos)
+        }
+    }
+}
+
+impl Read for File<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let (pos_data, size) = self.pos_data_and_size();
+        let n = {
+            let mut file = self.archive.file.file();
+            file.seek(SeekFrom::Start(pos_data + self.seek_pos as u64))?;
+            let len = buf.len().min((size as u64 - self.seek_pos) as usize);
+            file.read(&mut buf[..len])?
+        };
+        self.seek(SeekFrom::Current(n as i64))?;
+        Ok(n)
+    }
+
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
+        let len = buf.len();
+        let size = self.pos_data_and_size().1 as usize;
+        buf.resize(len + size as usize, 0);
+        self.read(&mut buf[len..])
+    }
+}
+
+pub struct FileMut<'pk2> {
+    archive: &'pk2 mut Pk2,
+    // the chain this file resides in
+    chain: ChainIndex,
+    // the index of this file in the chain
+    entry_index: usize,
+    seek_pos: u64,
+    data: Vec<u8>,
+}
+
+impl<'pk2> FileMut<'pk2> {
+    pub(in crate) fn new(archive: &'pk2 mut Pk2, chain: ChainIndex, entry_index: usize) -> Self {
+        FileMut {
             archive,
             chain,
             entry_index,
             seek_pos: 0,
-            data: None,
-        })
+            data: Vec::new(),
+        }
     }
 
     pub fn modify_time(&self) -> FILETIME {
@@ -123,20 +213,24 @@ impl<'pk2> File<'pk2> {
             _ => unreachable!(),
         }
     }
+
+    fn fetch_data(&mut self) -> io::Result<()> {
+        let (pos_data, size) = self.pos_data_and_size();
+        self.data.resize(size as usize, 0);
+        let mut file = self.archive.file.file();
+        file.seek(SeekFrom::Start(pos_data as u64))?;
+        file.read_exact(&mut self.data)?;
+        Ok(())
+    }
 }
 
-impl Seek for File<'_> {
+impl Seek for FileMut<'_> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let size = self
-            .data
-            .as_ref()
-            .map(Vec::len)
-            .unwrap_or(0)
-            .max(self.pos_data_and_size().1 as usize);
+        let size = self.data.len().max(self.pos_data_and_size().1 as usize) as u64;
         let (base_pos, offset) = match pos {
             SeekFrom::Start(n) => {
-                self.seek_pos = (n as usize).min(size);
-                return Ok(self.seek_pos as u64);
+                self.seek_pos = n.min(size);
+                return Ok(self.seek_pos);
             }
             SeekFrom::End(n) => (size, n),
             SeekFrom::Current(n) => (self.seek_pos, n),
@@ -148,97 +242,89 @@ impl Seek for File<'_> {
                 "invalid seek to a negative position",
             ))
         } else {
-            self.seek_pos = (new_pos as usize).min(size);
-            Ok(self.seek_pos as u64)
+            self.seek_pos = size.min(new_pos as u64);
+            Ok(self.seek_pos)
         }
     }
 }
 
-impl Read for File<'_> {
+impl Read for FileMut<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
             Ok(0)
         // we've got the data in our buffer so read it from there
-        } else if let Some(data) = self.data.as_ref() {
-            let len = (data.len() - self.seek_pos).min(buf.len());
-            buf[..len].copy_from_slice(&data[self.seek_pos..self.seek_pos + len]);
+        } else if !self.data.is_empty() {
+            let seek_pos = self.seek_pos as usize;
+            let len = buf.len().min((self.data.len() - seek_pos) as usize);
+            buf[..len].copy_from_slice(&self.data[seek_pos..seek_pos + len]);
             self.seek(SeekFrom::Current(len as i64))?;
             Ok(len)
+        // we dont have the data yet so fetch it then read again
+        } else if self.pos_data_and_size().1 > 0 {
+            self.fetch_data()?;
+            self.read(buf)
         } else {
-            let (pos_data, size) = self.pos_data_and_size();
-            let n = {
-                let mut file = self.archive.file.file();
-                file.seek(SeekFrom::Start(pos_data + self.seek_pos as u64))?;
-                let len = (size as usize - self.seek_pos).min(buf.len());
-                file.read(&mut buf[..len])?
-            };
-            self.seek(SeekFrom::Current(n as i64))?;
-            Ok(n)
+            Ok(0)
         }
     }
 
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
         let len = buf.len();
-        let size = self
-            .data
-            .as_ref()
-            .map(Vec::len)
-            .unwrap_or(0)
-            .max(self.pos_data_and_size().1 as usize);
+        let size = self.data.len().max(self.pos_data_and_size().1 as usize);
         buf.resize(len + size as usize, 0);
         self.read(&mut buf[len..])
     }
 }
 
-impl Write for File<'_> {
+impl Write for FileMut<'_> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let (pos_data, size) = self.pos_data_and_size();
-        if let Some(data) = self.data.as_mut() {
-            // our buffer is empty so read out the actual file contents and place them into
-            // our buffer so they wont get lost
-            if data.is_empty() && size > 0 {
-                let mut file = self.archive.file.file();
-                file.seek(SeekFrom::Start(pos_data))?;
-                (&mut *file).take(size.into()).read_to_end(data)?;
-            }
-            let data_len = data.len();
-            if self.seek_pos + buf.len() <= data_len {
-                data[self.seek_pos..self.seek_pos + buf.len()].copy_from_slice(buf);
+        let (_, size) = self.pos_data_and_size();
+        if !self.data.is_empty() {
+            let data_len = self.data.len();
+            let seek_pos = self.seek_pos as usize;
+
+            if let Some(slice) = self.data.get_mut(seek_pos..seek_pos + buf.len()) {
+                slice.copy_from_slice(buf);
             } else {
-                data[self.seek_pos..].copy_from_slice(&buf[..data_len - self.seek_pos]);
-                data.extend_from_slice(&buf[data_len - self.seek_pos..]);
+                let (copy, extend) = buf.split_at(data_len - seek_pos);
+                self.data[seek_pos..].copy_from_slice(copy);
+                self.data.extend_from_slice(extend);
             }
             self.seek(SeekFrom::Current(buf.len() as i64))?;
             Ok(buf.len())
+        } else if size > 0 {
+            self.fetch_data()?;
+            self.write(buf)
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "file was opened in read-only mode",
-            ))
+            self.data.write(buf)
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        if let Some(data) = self.data.as_ref() {
-            let (file_data_pos, file_data_size) =
-                // cant use `entry_mut` since this would borrow all of self for the whole scope
-                match self.archive.get_entry_mut(self.chain, self.entry_index) {
+        if !self.data.is_empty() {
+            let (file_data_pos, file_data_size) = {
+                let entry_index = self.entry_index;
+                // cant use `entry_mut` since this would borrow self for the whole scope
+                match self
+                    .archive
+                    .block_manager
+                    .get_mut(self.chain)
+                    .and_then(|chain| chain.get_mut(entry_index))
+                {
                     Some(PackEntry::File { pos_data, size, .. }) => (pos_data, size),
                     _ => panic!("invalid file object, this is a bug"),
-                };
+                }
+            };
             // new unwritten file/more data than what fits, so use a new block
-            if data.len() > *file_data_size as usize {
-                *file_data_pos = self.archive.file.write_new_data_buffer(data)?;
-                *file_data_size = data.len() as u32;
+            if self.data.len() > *file_data_size as usize {
+                *file_data_pos = self.archive.file.write_new_data_buffer(&self.data)?;
+                *file_data_size = self.data.len() as u32;
             // we got data to write that is not bigger than the block we have
-            } else if !data.is_empty() {
+            } else {
                 self.archive
                     .file
-                    .write_data_buffer_at(*file_data_pos, data)?;
-                *file_data_size = data.len() as u32;
-            } else {
-                // exit early, dont need to update the entry
-                return Ok(());
+                    .write_data_buffer_at(*file_data_pos, &self.data)?;
+                *file_data_size = self.data.len() as u32;
             }
             // update entry
             let entry_offset = self
@@ -246,18 +332,16 @@ impl Write for File<'_> {
                 .get_chain(self.chain)
                 .and_then(|chain| chain.file_offset_for_entry(self.entry_index))
                 .unwrap();
-            self.archive
-                .file
-                .write_entry_at(entry_offset, self.entry())?;
+            self.archive.file.write_entry_at(entry_offset, self.entry())
+        } else {
+            Ok(())
         }
-        Ok(())
     }
 }
 
-impl Drop for File<'_> {
+impl Drop for FileMut<'_> {
     fn drop(&mut self) {
         let _ = self.flush();
-        self.archive.drop_borrow(self.chain, self.entry_index);
     }
 }
 
@@ -289,7 +373,7 @@ impl<'pk2> Directory<'pk2> {
     fn dir_chain(&self, chain: ChainIndex) -> &PackBlockChain {
         self.archive
             .get_chain(chain)
-            .expect("folder pointed to an invalid chain, this is a bug")
+            .expect("invalid dir object, this is a bug")
     }
 
     fn pos_children(&self) -> ChainIndex {
@@ -306,65 +390,33 @@ impl<'pk2> Directory<'pk2> {
         }
     }
 
-    pub fn files(&'pk2 self) -> impl Iterator<Item = Pk2Result<File<'pk2>>> {
+    /// Returns an iterator over all files in this directory.
+    pub fn files(&'pk2 self) -> impl Iterator<Item = File<'pk2>> {
         let chain = self.pos_children();
         self.dir_chain(chain)
             .entries()
             .enumerate()
             .flat_map(move |(idx, entry)| match entry {
-                PackEntry::File { .. } => Some(File::new_read(self.archive, chain, idx)),
+                PackEntry::File { .. } => Some(File::new(self.archive, chain, idx)),
                 _ => None,
             })
     }
 
-    pub fn files_mut(&'pk2 self) -> impl Iterator<Item = Pk2Result<File<'pk2>>> {
-        let chain = self.pos_children();
-        self.dir_chain(chain)
-            .entries()
-            .enumerate()
-            .flat_map(move |(idx, entry)| match entry {
-                PackEntry::File { .. } => Some(File::new_write(self.archive, chain, idx)),
-                _ => None,
-            })
-    }
-
-    /// Returns an iterator over all file items in this directory.
-    pub fn entries(&'pk2 self) -> impl Iterator<Item = Pk2Result<DirEntry<'pk2>>> {
+    /// Returns an iterator over all items in this directory excluding `.` and
+    /// `..`.
+    pub fn entries(&'pk2 self) -> impl Iterator<Item = DirEntry<'pk2>> {
         let chain = self.pos_children();
         self.dir_chain(chain)
             .entries()
             .enumerate()
             .flat_map(move |(idx, entry)| match entry {
                 PackEntry::Directory { name, .. } if name == "." || name == ".." => None,
-                PackEntry::File { .. } => {
-                    Some(File::new_read(self.archive, chain, idx).map(DirEntry::File))
-                }
-                PackEntry::Directory { .. } => Some(Ok(DirEntry::Directory(Directory::new(
+                PackEntry::File { .. } => Some(DirEntry::File(File::new(self.archive, chain, idx))),
+                PackEntry::Directory { .. } => Some(DirEntry::Directory(Directory::new(
                     self.archive,
                     chain,
                     idx,
-                )))),
-                PackEntry::Empty { .. } => None,
-            })
-    }
-
-    /// Returns an iterator over all file items in this directory with files
-    /// being opened as writable.
-    pub fn entries_mut(&'pk2 self) -> impl Iterator<Item = Pk2Result<DirEntry<'pk2>>> {
-        let chain = self.pos_children();
-        self.dir_chain(chain)
-            .entries()
-            .enumerate()
-            .flat_map(move |(idx, entry)| match entry {
-                PackEntry::Directory { name, .. } if name == "." || name == ".." => None,
-                PackEntry::File { .. } => {
-                    Some(File::new_write(self.archive, chain, idx).map(DirEntry::File))
-                }
-                PackEntry::Directory { .. } => Some(Ok(DirEntry::Directory(Directory::new(
-                    self.archive,
-                    chain,
-                    idx,
-                )))),
+                ))),
                 PackEntry::Empty { .. } => None,
             })
     }

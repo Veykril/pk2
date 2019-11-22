@@ -9,21 +9,19 @@ use crate::ChainIndex;
 /// A collection of [`PackBlock`]s where each blocks next_block field points to
 /// the following block in the file.
 pub(crate) struct PackBlockChain {
-    // the blocks are boxed to prevent reallocations of the vec from moving them, this would
-    // invalidate outstanding references
-    blocks: Vec<Box<PackBlock>>,
+    blocks: Vec<PackBlock>,
 }
 
 impl PackBlockChain {
     #[inline]
-    pub(crate) fn from_blocks(blocks: Vec<Box<PackBlock>>) -> Self {
+    pub(crate) fn from_blocks(blocks: Vec<PackBlock>) -> Self {
         debug_assert!(!blocks.is_empty());
         PackBlockChain { blocks }
     }
 
     #[inline]
     pub(crate) fn push(&mut self, block: PackBlock) {
-        self.blocks.push(Box::new(block));
+        self.blocks.push(block);
     }
 
     /// This blockchains chain index/file offset.

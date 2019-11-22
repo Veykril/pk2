@@ -48,19 +48,9 @@ impl PackEntry {
     ) -> Self {
         PackEntry::Directory {
             name,
-            /// FIXME filetimes
-            access_time: FILETIME {
-                dwLowDateTime: 0x7414,
-                dwHighDateTime: 0xB8BF,
-            },
-            create_time: FILETIME {
-                dwLowDateTime: 0x7414,
-                dwHighDateTime: 0xB8BF,
-            },
-            modify_time: FILETIME {
-                dwLowDateTime: 0x7414,
-                dwHighDateTime: 0xB8BF,
-            },
+            access_time: Default::default(),
+            create_time: Default::default(),
+            modify_time: Default::default(),
             pos_children,
             next_block,
         }
@@ -94,12 +84,9 @@ impl PackEntry {
     pub(crate) fn set_next_block(&mut self, nc: u64) {
         match self {
             PackEntry::Empty { .. } => (),
-            PackEntry::Directory {
-                ref mut next_block, ..
+            PackEntry::Directory { next_block, .. } | PackEntry::File { next_block, .. } => {
+                *next_block = NonZeroU64::new(nc)
             }
-            | PackEntry::File {
-                ref mut next_block, ..
-            } => *next_block = NonZeroU64::new(nc),
         }
     }
 

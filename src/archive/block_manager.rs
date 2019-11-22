@@ -38,7 +38,7 @@ impl BlockManager {
         loop {
             let block = file.read_block_at(offset)?;
             let nc = block.entries().rev().find_map(PackEntry::next_block);
-            blocks.push(Box::new(block));
+            blocks.push(block);
             match nc {
                 Some(nc) => offset = nc.get(),
                 None => break Ok(PackBlockChain::from_blocks(blocks)),
