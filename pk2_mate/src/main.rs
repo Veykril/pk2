@@ -9,11 +9,13 @@ fn main() {
         .author(crate_authors!())
         .about(crate_description!())
         .subcommand(extract_app())
-        .subcommand(repack_app());
+        .subcommand(repack_app())
+        .subcommand(pack_app());
     let matches = app.get_matches();
     match matches.subcommand() {
         ("extract", Some(matches)) => extract(matches),
         ("repack", Some(matches)) => repack(matches),
+        ("pack", Some(matches)) => pack(matches),
         _ => println!("{}", matches.usage()),
     }
 }
@@ -160,6 +162,80 @@ fn repack_files(out_archive: &mut pk2::Pk2, folder: pk2::fs::Directory<'_>, path
                 let path = path.join(dir.name());
                 repack_files(out_archive, dir, &path);
             }
+        }
+    }
+}
+
+fn pack_app() -> App<'static, 'static> {
+    SubCommand::with_name("pack")
+        .version(crate_version!())
+        .author(crate_authors!())
+        .about(crate_description!())
+        .arg(
+            Arg::with_name("directory")
+                .short("d")
+                .long("directory")
+                .required(true)
+                .takes_value(true)
+                .help("Sets the directory to pack"),
+        )
+        .arg(
+            Arg::with_name("key")
+                .short("k")
+                .long("key")
+                .takes_value(true)
+                .default_value("169841")
+                .help("Sets the blowfish key for the resulting archive"),
+        )
+        .arg(
+            Arg::with_name("archive")
+                .short("a")
+                .long("archive")
+                .takes_value(true)
+                .help("Sets the output path to pack into"),
+        )
+}
+
+fn pack(matches: &ArgMatches<'static>) {
+    let key = matches.value_of("key").unwrap().as_bytes();
+    let input_path = matches.value_of_os("directory").map(Path::new).unwrap();
+    let out_archive_path = matches
+        .value_of_os("archive")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| input_path.with_extension("pk2"));
+    if !input_path.is_dir() {
+        return;
+    }
+    let mut out_archive = pk2::Pk2::create(&out_archive_path, key).expect(&format!(
+        "failed to create archive at {:?}",
+        out_archive_path
+    ));
+    println!("Packing {:?} into {:?}.", input_path, out_archive_path);
+    pack_files(&mut out_archive, input_path, input_path);
+}
+
+fn pack_files(out_archive: &mut pk2::Pk2, dir_path: &Path, base: &Path) {
+    // ngl working with paths in rust sucks
+    use std::io::{Read, Write};
+    let mut buf = Vec::new();
+    for entry in std::fs::read_dir(dir_path).unwrap() {
+        let entry = entry.unwrap();
+        let ty = entry.file_type().unwrap();
+        let path = entry.path();
+        if ty.is_dir() {
+            pack_files(out_archive, &path, base);
+        } else if ty.is_file() {
+            let mut file = std::fs::File::open(&path).unwrap();
+            file.read_to_end(&mut buf).unwrap();
+            out_archive
+                .create_file(
+                    (<str as std::convert::AsRef<Path>>::as_ref("/"))
+                        .join(path.strip_prefix(base).unwrap()),
+                )
+                .unwrap()
+                .write_all(&buf)
+                .unwrap();
+            buf.clear();
         }
     }
 }
