@@ -73,6 +73,15 @@ impl PackEntry {
         }
     }
 
+    pub(crate) fn clear(&mut self) {
+        let next_block = match *self {
+            PackEntry::Empty { next_block }
+            | PackEntry::Directory { next_block, .. }
+            | PackEntry::File { next_block, .. } => next_block,
+        };
+        *self = PackEntry::Empty { next_block };
+    }
+
     pub(crate) fn next_block(&self) -> Option<NonZeroU64> {
         match *self {
             PackEntry::Empty { next_block }

@@ -103,15 +103,17 @@ impl ops::IndexMut<usize> for PackBlockChain {
 }
 
 /// A collection of 20 [`PackEntry`]s.
-#[derive(Default)]
 pub(crate) struct PackBlock {
     pub offset: u64,
     entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT],
 }
 
 impl PackBlock {
-    pub(crate) fn new() -> Self {
-        Self::default()
+    pub(crate) fn new(offset: u64) -> Self {
+        PackBlock {
+            offset,
+            entries: Default::default(),
+        }
     }
 
     pub(crate) fn from_reader<R: Read>(mut r: R, offset: u64) -> Pk2Result<Self> {

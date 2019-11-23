@@ -7,7 +7,7 @@ use std::io::{self, Read, Write};
 use crate::constants;
 use crate::Blowfish;
 
-pub struct PackHeader {
+pub(crate) struct PackHeader {
     pub signature: [u8; 30],
     pub version: u32,
     pub encrypted: bool,

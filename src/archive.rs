@@ -21,7 +21,6 @@ pub(crate) use self::entry::PackEntry;
 pub(crate) use self::header::PackHeader;
 
 pub struct Pk2 {
-    header: PackHeader,
     pub(crate) file: PhysicalFile,
     // we'll make sure to uphold runtime borrow rules, this is needed to allow borrowing file names
     // and such. This will be fine given that blocks can only move in memory through mutating
@@ -48,14 +47,12 @@ impl Pk2 {
         };
 
         header.to_writer(&mut file)?;
-        let mut block = PackBlock::new();
-        block.offset = PK2_ROOT_BLOCK.0;
+        let mut block = PackBlock::new(PK2_ROOT_BLOCK.0);
         block[0] = PackEntry::new_directory(".".to_owned(), PK2_ROOT_BLOCK, None);
         file.write_block(&block)?;
 
         let block_manager = BlockManager::new(&file)?;
         Ok(Pk2 {
-            header,
             file,
             block_manager,
         })
@@ -86,14 +83,9 @@ impl Pk2 {
         let file = PhysicalFile::new(file, bf);
         let block_manager = BlockManager::new(&file)?;
         Ok(Pk2 {
-            header,
             file,
             block_manager,
         })
-    }
-
-    pub fn header(&self) -> &PackHeader {
-        &self.header
     }
 
     #[inline(always)]
@@ -170,14 +162,14 @@ impl Pk2 {
             .root_resolve_path_to_entry_and_parent(path)
             .and_then(|opt| opt.ok_or(Error::ExpectedFile))?;
         Self::is_file(entry)?;
+
         let next_block = entry.next_block();
         let chain_index = chain.chain_index();
         let file_offset = chain.file_offset_for_entry(entry_idx).unwrap();
-        let entry = std::mem::replace(
-            self.get_entry_mut(chain_index, entry_idx).unwrap(),
-            PackEntry::Empty { next_block },
-        );
-        self.file.write_entry_at(file_offset, &entry)?;
+        self.get_entry_mut(chain_index, entry_idx)
+            .map(PackEntry::clear);
+        self.file
+            .write_entry_at(file_offset, &PackEntry::Empty { next_block })?;
         Ok(())
     }
 
@@ -194,6 +186,7 @@ impl Pk2 {
         *entry = PackEntry::new_file(file_name, 0, 0, entry.next_block());
         Ok(FileMut::new(self, chain, entry_idx))
     }
+
     pub fn open_directory<P: AsRef<Path>>(&self, path: P) -> Pk2Result<Directory> {
         let (chain, entry_idx) = match self.root_resolve_path_to_entry_and_parent(path)? {
             Some((chain, entry_idx, entry)) => {
@@ -209,7 +202,7 @@ impl Pk2 {
 
 impl Pk2 {
     /// This function traverses the whole path creating anything that does not
-    /// yet exist returning last the created entry. This means using parent and
+    /// yet exist returning the last created entry. This means using parent and
     /// current dir parts in a path that in the end directs to an already
     /// existing path might still create new directories. TODO: Experiment
     /// with a recursive version to avoid borrowck?
@@ -228,13 +221,12 @@ impl Pk2 {
                         .block_manager
                         .get_mut(current_chain_index)
                         .ok_or(Error::InvalidChainIndex)?;
-                    let idx = match current_chain.find_first_empty_mut() {
+                    let chain_entry_idx = match current_chain.find_first_empty_mut() {
                         Some((idx, _)) => idx,
                         None => {
                             // current chain is full so create a new block and append it
                             let new_block_offset = self.file.len()?;
-                            let mut block = PackBlock::default();
-                            block.offset = new_block_offset;
+                            let block = PackBlock::new(new_block_offset);
                             self.file.write_block(&block)?;
                             let last_idx = current_chain.entries_mut().count() - 1;
                             current_chain[last_idx].set_next_block(new_block_offset);
@@ -246,10 +238,11 @@ impl Pk2 {
                             last_idx + 1
                         }
                     };
-                    // Are we done after this? if not, create a new blockchain
+                    // Are we done after this? if not, create a new blockchain since this is a new
+                    // directory
                     if components.peek().is_some() {
                         let new_chain_offset = self.file.len().map(ChainIndex)?;
-                        let entry = &mut current_chain[idx];
+                        let entry = &mut current_chain[chain_entry_idx];
                         *entry = PackEntry::new_directory(
                             p.to_str()
                                 .map(ToOwned::to_owned)
@@ -257,9 +250,10 @@ impl Pk2 {
                             new_chain_offset,
                             entry.next_block(),
                         );
-                        let offset = current_chain.file_offset_for_entry(idx).unwrap();
-                        let mut block = PackBlock::default();
-                        block.offset = new_chain_offset.0;
+                        let offset = current_chain
+                            .file_offset_for_entry(chain_entry_idx)
+                            .unwrap();
+                        let mut block = PackBlock::new(new_chain_offset.0);
                         block[0] =
                             PackEntry::new_directory(".".to_string(), new_chain_offset, None);
                         block[1] = PackEntry::new_directory(
@@ -268,16 +262,30 @@ impl Pk2 {
                             None,
                         );
                         self.file.write_block(&block)?;
-                        self.file.write_entry_at(offset, &current_chain[idx])?;
+                        self.file
+                            .write_entry_at(offset, &current_chain[chain_entry_idx])?;
                         self.block_manager
                             .insert(new_chain_offset, PackBlockChain::from_blocks(vec![block]));
                         current_chain_index = new_chain_offset;
                     } else {
-                        return Ok((current_chain.chain_index(), idx));
+                        return Ok((current_chain.chain_index(), chain_entry_idx));
                     }
                 }
-                Component::CurDir => unimplemented!(),
-                Component::ParentDir => unimplemented!(),
+                Component::CurDir => (),
+                Component::ParentDir => {
+                    current_chain_index = self
+                        .block_manager
+                        .get_mut(current_chain_index)
+                        .ok_or(Error::InvalidChainIndex)?
+                        .entries()
+                        .find_map(|entry| match entry {
+                            PackEntry::Directory {
+                                name, pos_children, ..
+                            } if name == ".." => Some(*pos_children),
+                            _ => None,
+                        })
+                        .ok_or(Error::InvalidPath)?;
+                }
                 _ => unreachable!(),
             }
         }
@@ -302,6 +310,7 @@ fn gen_final_blowfish_key_inplace(key: &mut [u8]) {
     }
 }
 
+#[inline]
 fn check_root(path: &Path) -> Pk2Result<&Path> {
     path.strip_prefix("/").map_err(|_| Error::InvalidPath)
 }
