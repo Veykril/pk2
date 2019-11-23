@@ -1,11 +1,11 @@
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
-use crate::archive::{PackEntry, Pk2};
+use crate::archive::{PackBlockChain, PackEntry, Pk2};
 use crate::ChainIndex;
 use crate::FILETIME;
 
-pub struct File<'pk2> {
-    archive: &'pk2 Pk2,
+pub struct File<'pk2, B = std::fs::File> {
+    archive: &'pk2 Pk2<B>,
     // the chain this file resides in
     chain: ChainIndex,
     // the index of this file in the chain
@@ -13,8 +13,8 @@ pub struct File<'pk2> {
     seek_pos: u64,
 }
 
-impl<'pk2> File<'pk2> {
-    pub(in crate) fn new(archive: &'pk2 Pk2, chain: ChainIndex, entry_index: usize) -> Self {
+impl<'pk2, B> File<'pk2, B> {
+    pub(in crate) fn new(archive: &'pk2 Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
         File {
             archive,
             chain,
@@ -72,7 +72,7 @@ impl<'pk2> File<'pk2> {
     }
 }
 
-impl Seek for File<'_> {
+impl<B> Seek for File<'_, B> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let size = self.pos_data_and_size().1 as u64;
         let (base_pos, offset) = match pos {
@@ -96,7 +96,10 @@ impl Seek for File<'_> {
     }
 }
 
-impl Read for File<'_> {
+impl<B> Read for File<'_, B>
+where
+    B: Read + Seek,
+{
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let (pos_data, size) = self.pos_data_and_size();
         let n = {
@@ -117,8 +120,11 @@ impl Read for File<'_> {
     }
 }
 
-pub struct FileMut<'pk2> {
-    archive: &'pk2 mut Pk2,
+pub struct FileMut<'pk2, B = std::fs::File>
+where
+    B: Read + Write + Seek,
+{
+    archive: &'pk2 mut Pk2<B>,
     // the chain this file resides in
     chain: ChainIndex,
     // the index of this file in the chain
@@ -127,8 +133,11 @@ pub struct FileMut<'pk2> {
     data: Vec<u8>,
 }
 
-impl<'pk2> FileMut<'pk2> {
-    pub(in crate) fn new(archive: &'pk2 mut Pk2, chain: ChainIndex, entry_index: usize) -> Self {
+impl<'pk2, B> FileMut<'pk2, B>
+where
+    B: Read + Write + Seek,
+{
+    pub(in crate) fn new(archive: &'pk2 mut Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
         FileMut {
             archive,
             chain,
@@ -224,7 +233,10 @@ impl<'pk2> FileMut<'pk2> {
     }
 }
 
-impl Seek for FileMut<'_> {
+impl<B> Seek for FileMut<'_, B>
+where
+    B: Read + Write + Seek,
+{
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let size = self.data.len().max(self.pos_data_and_size().1 as usize) as u64;
         let (base_pos, offset) = match pos {
@@ -248,7 +260,10 @@ impl Seek for FileMut<'_> {
     }
 }
 
-impl Read for FileMut<'_> {
+impl<B> Read for FileMut<'_, B>
+where
+    B: Read + Write + Seek,
+{
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
             Ok(0)
@@ -276,7 +291,10 @@ impl Read for FileMut<'_> {
     }
 }
 
-impl Write for FileMut<'_> {
+impl<B> Write for FileMut<'_, B>
+where
+    B: Read + Write + Seek,
+{
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let (_, size) = self.pos_data_and_size();
         if !self.data.is_empty() {
@@ -339,21 +357,23 @@ impl Write for FileMut<'_> {
     }
 }
 
-impl Drop for FileMut<'_> {
+impl<B> Drop for FileMut<'_, B>
+where
+    B: Write + Read + Seek,
+{
     fn drop(&mut self) {
         let _ = self.flush();
     }
 }
 
-pub struct Directory<'pk2> {
-    archive: &'pk2 Pk2,
+pub struct Directory<'pk2, B = std::fs::File> {
+    archive: &'pk2 Pk2<B>,
     chain: ChainIndex,
     entry_index: usize,
 }
 
-use crate::archive::PackBlockChain;
-impl<'pk2> Directory<'pk2> {
-    pub(in crate) fn new(archive: &'pk2 Pk2, chain: ChainIndex, entry_index: usize) -> Self {
+impl<'pk2, B> Directory<'pk2, B> {
+    pub(in crate) fn new(archive: &'pk2 Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
         Directory {
             archive,
             chain,
@@ -391,7 +411,7 @@ impl<'pk2> Directory<'pk2> {
     }
 
     /// Returns an iterator over all files in this directory.
-    pub fn files(&'pk2 self) -> impl Iterator<Item = File<'pk2>> {
+    pub fn files(&'pk2 self) -> impl Iterator<Item = File<'pk2, B>> {
         let chain = self.pos_children();
         self.dir_chain(chain)
             .entries()
@@ -404,7 +424,7 @@ impl<'pk2> Directory<'pk2> {
 
     /// Returns an iterator over all items in this directory excluding `.` and
     /// `..`.
-    pub fn entries(&'pk2 self) -> impl Iterator<Item = DirEntry<'pk2>> {
+    pub fn entries(&'pk2 self) -> impl Iterator<Item = DirEntry<'pk2, B>> {
         let chain = self.pos_children();
         self.dir_chain(chain)
             .entries()
@@ -422,7 +442,7 @@ impl<'pk2> Directory<'pk2> {
     }
 }
 
-pub enum DirEntry<'pk2> {
-    Directory(Directory<'pk2>),
-    File(File<'pk2>),
+pub enum DirEntry<'pk2, B> {
+    Directory(Directory<'pk2, B>),
+    File(File<'pk2, B>),
 }

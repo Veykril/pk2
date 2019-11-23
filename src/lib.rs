@@ -1,6 +1,7 @@
 #![warn(clippy::all)]
 #![allow(clippy::match_bool)]
-pub mod fs;
+mod fs;
+pub use self::fs::*;
 
 mod error;
 pub use self::error::Error;
@@ -8,8 +9,8 @@ pub use self::error::Error;
 mod archive;
 pub use self::archive::Pk2;
 
-mod phys_file;
-pub(crate) use self::phys_file::PhysicalFile;
+mod buffer;
+pub(crate) use self::buffer::ArchiveBuffer;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ChainIndex(pub u64);

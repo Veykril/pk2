@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::io;
 use std::path::{Component, Path};
 
 use crate::archive::{PackBlockChain, PackEntry};
 use crate::constants::PK2_ROOT_BLOCK;
 use crate::error::{Error, Pk2Result};
+use crate::ArchiveBuffer;
 use crate::ChainIndex;
-use crate::PhysicalFile;
 
 pub(crate) struct BlockManager {
     chains: HashMap<ChainIndex, PackBlockChain, NoHashHasherBuilder>,
@@ -13,7 +14,7 @@ pub(crate) struct BlockManager {
 
 impl BlockManager {
     /// Parses the complete index of a pk2 file
-    pub(crate) fn new(file: &PhysicalFile) -> Pk2Result<Self> {
+    pub(crate) fn new<B: io::Read + io::Seek>(file: &ArchiveBuffer<B>) -> Pk2Result<Self> {
         let mut chains = HashMap::default();
         let mut offsets = vec![PK2_ROOT_BLOCK.0];
         while let Some(offset) = offsets.pop() {
@@ -33,7 +34,10 @@ impl BlockManager {
     /// Reads a [`PackBlockChain`] from the given file at the specified offset.
     /// Note: FIXME Can potentially end up in a neverending loop with a
     /// specially crafted file.
-    fn read_chain_from_file_at(file: &PhysicalFile, mut offset: u64) -> Pk2Result<PackBlockChain> {
+    fn read_chain_from_file_at<B: io::Read + io::Seek>(
+        file: &ArchiveBuffer<B>,
+        mut offset: u64,
+    ) -> Pk2Result<PackBlockChain> {
         let mut blocks = Vec::new();
         loop {
             let block = file.read_block_at(offset)?;

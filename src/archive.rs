@@ -1,14 +1,14 @@
 use block_modes::BlockMode;
 
-use std::fs::OpenOptions;
 use std::path::{Component, Path};
+use std::{fs, io};
 
 use crate::constants::*;
 use crate::error::{Error, Pk2Result};
 use crate::fs::{Directory, File, FileMut};
+use crate::ArchiveBuffer;
 use crate::Blowfish;
 use crate::ChainIndex;
-use crate::PhysicalFile;
 
 mod block_chain;
 mod block_manager;
@@ -20,8 +20,8 @@ pub(crate) use self::block_manager::BlockManager;
 pub(crate) use self::entry::PackEntry;
 pub(crate) use self::header::PackHeader;
 
-pub struct Pk2 {
-    pub(crate) file: PhysicalFile,
+pub struct Pk2<B = fs::File> {
+    pub(crate) file: ArchiveBuffer<B>,
     // we'll make sure to uphold runtime borrow rules, this is needed to allow borrowing file names
     // and such. This will be fine given that blocks can only move in memory through mutating
     // operations on themselves which cannot work if their name or anything similar is
@@ -29,37 +29,32 @@ pub struct Pk2 {
     pub(crate) block_manager: BlockManager,
 }
 
-impl Pk2 {
-    pub fn create<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Pk2Result<Self> {
-        let file = OpenOptions::new()
+impl Pk2<fs::File> {
+    pub fn create_new<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Pk2Result<Self> {
+        let file = fs::OpenOptions::new()
             .create_new(true)
             .write(true)
             .read(true)
             .open(path.as_ref())?;
-        let (header, mut file) = if key.as_ref().is_empty() {
-            (PackHeader::default(), PhysicalFile::new(file, None))
-        } else {
-            let mut bf = create_blowfish(key.as_ref())?;
-            (
-                PackHeader::new_encrypted(&mut bf),
-                PhysicalFile::new(file, Some(bf)),
-            )
-        };
-
-        header.to_writer(&mut file)?;
-        let mut block = PackBlock::new(PK2_ROOT_BLOCK.0);
-        block[0] = PackEntry::new_directory(".".to_owned(), PK2_ROOT_BLOCK, None);
-        file.write_block(&block)?;
-
-        let block_manager = BlockManager::new(&file)?;
-        Ok(Pk2 {
-            file,
-            block_manager,
-        })
+        Self::_create_impl(file, key)
     }
 
     pub fn open<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Pk2Result<Self> {
-        let mut file = OpenOptions::new().write(true).read(true).open(path)?;
+        let file = fs::OpenOptions::new().write(true).read(true).open(path)?;
+        Self::_open_in_impl(file, key)
+    }
+}
+
+impl<B> Pk2<B>
+where
+    B: io::Read + io::Seek,
+{
+    pub fn open_in<K: AsRef<[u8]>>(mut file: B, key: K) -> Pk2Result<Self> {
+        file.seek(io::SeekFrom::Start(0))?;
+        Self::_open_in_impl(file, key)
+    }
+
+    pub fn _open_in_impl<K: AsRef<[u8]>>(mut file: B, key: K) -> Pk2Result<Self> {
         let header = PackHeader::from_reader(&mut file)?;
         if &header.signature != PK2_SIGNATURE {
             return Err(Error::CorruptedFile);
@@ -80,14 +75,49 @@ impl Pk2 {
         } else {
             None
         };
-        let file = PhysicalFile::new(file, bf);
+        let file = ArchiveBuffer::new(file, bf);
         let block_manager = BlockManager::new(&file)?;
         Ok(Pk2 {
             file,
             block_manager,
         })
     }
+}
 
+impl<B> Pk2<B>
+where
+    B: io::Read + io::Write + io::Seek,
+{
+    pub fn create_new_in<K: AsRef<[u8]>>(mut file: B, key: K) -> Pk2Result<Self> {
+        file.seek(io::SeekFrom::Start(0))?;
+        Self::_create_impl(file, key)
+    }
+
+    fn _create_impl<K: AsRef<[u8]>>(file: B, key: K) -> Pk2Result<Self> {
+        let (header, mut file) = if key.as_ref().is_empty() {
+            (PackHeader::default(), ArchiveBuffer::new(file, None))
+        } else {
+            let mut bf = create_blowfish(key.as_ref())?;
+            (
+                PackHeader::new_encrypted(&mut bf),
+                ArchiveBuffer::new(file, Some(bf)),
+            )
+        };
+
+        header.to_writer(&mut file)?;
+        let mut block = PackBlock::new(PK2_ROOT_BLOCK.0);
+        block[0] = PackEntry::new_directory(".".to_owned(), PK2_ROOT_BLOCK, None);
+        file.write_block(&block)?;
+
+        let block_manager = BlockManager::new(&file)?;
+        Ok(Pk2 {
+            file,
+            block_manager,
+        })
+    }
+}
+
+impl<B> Pk2<B> {
     #[inline(always)]
     pub(crate) fn get_chain(&self, chain: ChainIndex) -> Option<&PackBlockChain> {
         self.block_manager.get(chain)
@@ -120,9 +150,7 @@ impl Pk2 {
         self.block_manager
             .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)
     }
-}
 
-impl Pk2 {
     fn is_file(entry: &PackEntry) -> Pk2Result<()> {
         match entry.is_file() {
             true => Ok(()),
@@ -136,8 +164,10 @@ impl Pk2 {
             false => Err(Error::ExpectedDirectory),
         }
     }
+}
 
-    pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Pk2Result<File> {
+impl<B> Pk2<B> {
+    pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Pk2Result<File<B>> {
         let (chain, entry_idx, entry) = self
             .root_resolve_path_to_entry_and_parent(path)
             .and_then(|opt| opt.ok_or(Error::ExpectedFile))?;
@@ -146,7 +176,24 @@ impl Pk2 {
         Ok(File::new(self, chain, entry_idx))
     }
 
-    pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<FileMut> {
+    pub fn open_directory<P: AsRef<Path>>(&self, path: P) -> Pk2Result<Directory<B>> {
+        let (chain, entry_idx) = match self.root_resolve_path_to_entry_and_parent(path)? {
+            Some((chain, entry_idx, entry)) => {
+                Self::is_dir(entry)?;
+                (chain.chain_index(), entry_idx)
+            }
+            // path was just root
+            None => (PK2_ROOT_BLOCK, 0),
+        };
+        Ok(Directory::new(self, chain, entry_idx))
+    }
+}
+
+impl<B> Pk2<B>
+where
+    B: io::Read + io::Write + io::Seek,
+{
+    pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<FileMut<B>> {
         let (chain, entry_idx, entry) = self
             .root_resolve_path_to_entry_and_parent(path)
             .and_then(|opt| opt.ok_or(Error::ExpectedFile))?;
@@ -173,7 +220,7 @@ impl Pk2 {
         Ok(())
     }
 
-    pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<FileMut> {
+    pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<FileMut<B>> {
         use std::ffi::OsStr;
         let path = check_root(path.as_ref())?;
         let file_name = path
@@ -187,20 +234,6 @@ impl Pk2 {
         Ok(FileMut::new(self, chain, entry_idx))
     }
 
-    pub fn open_directory<P: AsRef<Path>>(&self, path: P) -> Pk2Result<Directory> {
-        let (chain, entry_idx) = match self.root_resolve_path_to_entry_and_parent(path)? {
-            Some((chain, entry_idx, entry)) => {
-                Self::is_dir(entry)?;
-                (chain.chain_index(), entry_idx)
-            }
-            // path was just root
-            None => (PK2_ROOT_BLOCK, 0),
-        };
-        Ok(Directory::new(self, chain, entry_idx))
-    }
-}
-
-impl Pk2 {
     /// This function traverses the whole path creating anything that does not
     /// yet exist returning the last created entry. This means using parent and
     /// current dir parts in a path that in the end directs to an already

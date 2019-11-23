@@ -64,13 +64,13 @@ fn extract(matches: &ArgMatches<'static>) {
     extract_files(folder, &out_path);
 }
 
-fn extract_files(folder: pk2::fs::Directory<'_>, out_path: &Path) {
+fn extract_files(folder: pk2::Directory<'_>, out_path: &Path) {
     use std::io::Read;
     let _ = std::fs::create_dir(out_path);
     let mut buf = Vec::new();
     for entry in folder.entries() {
         match entry {
-            pk2::fs::DirEntry::File(mut file) => {
+            pk2::DirEntry::File(mut file) => {
                 file.read_to_end(&mut buf).unwrap();
                 let file_path = out_path.join(file.name());
                 if let Err(e) = std::fs::write(&file_path, &buf) {
@@ -78,7 +78,7 @@ fn extract_files(folder: pk2::fs::Directory<'_>, out_path: &Path) {
                 }
                 buf.clear();
             }
-            pk2::fs::DirEntry::Directory(dir) => {
+            pk2::DirEntry::Directory(dir) => {
                 let dir_name = dir.name();
                 let path = out_path.join(dir_name);
                 extract_files(dir, &path);
@@ -138,7 +138,7 @@ fn repack(matches: &ArgMatches<'static>) {
         .unwrap_or_else(|| archive_path.with_extension("repack.pk2"));
     let in_archive = pk2::Pk2::open(archive_path, key)
         .expect(&format!("failed to open archive at {:?}", archive_path));
-    let mut out_archive = pk2::Pk2::create(&out_archive_path, packkey).expect(&format!(
+    let mut out_archive = pk2::Pk2::create_new(&out_archive_path, packkey).expect(&format!(
         "failed to create archive at {:?}",
         out_archive_path
     ));
@@ -147,18 +147,18 @@ fn repack(matches: &ArgMatches<'static>) {
     repack_files(&mut out_archive, folder, "/".as_ref());
 }
 
-fn repack_files(out_archive: &mut pk2::Pk2, folder: pk2::fs::Directory<'_>, path: &Path) {
+fn repack_files(out_archive: &mut pk2::Pk2, folder: pk2::Directory<'_>, path: &Path) {
     use std::io::{Read, Write};
     let mut buf = Vec::new();
     for entry in folder.entries() {
         match entry {
-            pk2::fs::DirEntry::File(mut file) => {
+            pk2::DirEntry::File(mut file) => {
                 file.read_to_end(&mut buf).unwrap();
                 let mut file = out_archive.create_file(path.join(file.name())).unwrap();
                 file.write_all(&buf).unwrap();
                 buf.clear();
             }
-            pk2::fs::DirEntry::Directory(dir) => {
+            pk2::DirEntry::Directory(dir) => {
                 let path = path.join(dir.name());
                 repack_files(out_archive, dir, &path);
             }
@@ -206,7 +206,7 @@ fn pack(matches: &ArgMatches<'static>) {
     if !input_path.is_dir() {
         return;
     }
-    let mut out_archive = pk2::Pk2::create(&out_archive_path, key).expect(&format!(
+    let mut out_archive = pk2::Pk2::create_new(&out_archive_path, key).expect(&format!(
         "failed to create archive at {:?}",
         out_archive_path
     ));

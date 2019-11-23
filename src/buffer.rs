@@ -1,7 +1,6 @@
 use block_modes::BlockMode;
 
 use std::cell::{RefCell, UnsafeCell};
-use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
 use crate::archive::{PackBlock, PackEntry};
@@ -9,14 +8,18 @@ use crate::constants::{PK2_FILE_BLOCK_SIZE, PK2_FILE_ENTRY_SIZE};
 use crate::error::Pk2Result;
 use crate::Blowfish;
 
-pub(crate) struct PhysicalFile {
-    file: RefCell<File>,
+pub(crate) struct ArchiveBuffer<B> {
+    file: RefCell<B>,
     // UnsafeCell is being used here due to the blowfish lib requiring mutability, we don't lend
     // out borrows for more than a function call though so this is fine
     bf: Option<UnsafeCell<Blowfish>>,
 }
 
-impl Drop for PhysicalFile {
+/*
+impl<B> Drop for ArchiveBuffer<B>
+where
+    B: Read + Write + Seek,
+{
     fn drop(&mut self) {
         let len = self.len().unwrap_or(0) as usize;
         // Apparently 4kb is the minimum archive size that the dll requires
@@ -25,20 +28,18 @@ impl Drop for PhysicalFile {
         }
     }
 }
+*/
 
-impl PhysicalFile {
-    pub(crate) fn new(file: File, bf: Option<Blowfish>) -> Self {
-        PhysicalFile {
+impl<B> ArchiveBuffer<B> {
+    pub(crate) fn new(file: B, bf: Option<Blowfish>) -> Self {
+        ArchiveBuffer {
             file: RefCell::new(file),
             bf: bf.map(UnsafeCell::new),
         }
     }
 
-    pub(crate) fn len(&self) -> Pk2Result<u64> {
-        self.file
-            .borrow_mut()
-            .seek(SeekFrom::End(0))
-            .map_err(Into::into)
+    pub(crate) fn file(&self) -> std::cell::RefMut<'_, B> {
+        self.file.borrow_mut()
     }
 
     #[inline]
@@ -56,7 +57,32 @@ impl PhysicalFile {
             .as_ref()
             .map(|bf| unsafe { &mut *bf.get() }.decrypt_nopad(buf));
     }
+}
 
+impl<B: Seek> ArchiveBuffer<B> {
+    pub(crate) fn len(&self) -> Pk2Result<u64> {
+        self.file
+            .borrow_mut()
+            .seek(SeekFrom::End(0))
+            .map_err(Into::into)
+    }
+}
+
+impl<B: Read + Seek> ArchiveBuffer<B> {
+    pub(crate) fn read_block_at(&self, offset: u64) -> Pk2Result<PackBlock> {
+        let mut buf = [0; PK2_FILE_BLOCK_SIZE];
+        let mut file = self.file.borrow_mut();
+        file.seek(SeekFrom::Start(offset))?;
+        file.read_exact(&mut buf)?;
+        self.decrypt(&mut buf);
+        PackBlock::from_reader(&buf[..], offset)
+    }
+}
+
+impl<B> ArchiveBuffer<B>
+where
+    B: Write + Seek,
+{
     pub(crate) fn write_entry_at(&self, offset: u64, entry: &PackEntry) -> io::Result<()> {
         let mut buf = [0; PK2_FILE_ENTRY_SIZE];
         entry.to_writer(&mut buf[..])?;
@@ -91,22 +117,9 @@ impl PhysicalFile {
         file.write_all(&buf)?;
         Ok(())
     }
-
-    pub(crate) fn read_block_at(&self, offset: u64) -> Pk2Result<PackBlock> {
-        let mut buf = [0; PK2_FILE_BLOCK_SIZE];
-        let mut file = self.file.borrow_mut();
-        file.seek(SeekFrom::Start(offset))?;
-        file.read_exact(&mut buf)?;
-        self.decrypt(&mut buf);
-        PackBlock::from_reader(&buf[..], offset)
-    }
-
-    pub(crate) fn file(&self) -> std::cell::RefMut<'_, File> {
-        self.file.borrow_mut()
-    }
 }
 
-impl Write for PhysicalFile {
+impl<B: Write> Write for ArchiveBuffer<B> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.file.borrow_mut().write(buf)
