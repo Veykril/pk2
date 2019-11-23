@@ -1,8 +1,9 @@
+#![allow(clippy::match_ref_pats)]
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::time::SystemTime;
 
 use crate::archive::{PackBlockChain, PackEntry, Pk2};
 use crate::ChainIndex;
-use crate::FILETIME;
 
 pub struct File<'pk2, B = std::fs::File> {
     archive: &'pk2 Pk2<B>,
@@ -23,23 +24,23 @@ impl<'pk2, B> File<'pk2, B> {
         }
     }
 
-    pub fn modify_time(&self) -> FILETIME {
+    pub fn modify_time(&self) -> Option<SystemTime> {
         match self.entry() {
-            PackEntry::File { modify_time, .. } => *modify_time,
+            &PackEntry::File { modify_time, .. } => modify_time.into_systime(),
             _ => unreachable!(),
         }
     }
 
-    pub fn access_time(&self) -> FILETIME {
+    pub fn access_time(&self) -> Option<SystemTime> {
         match self.entry() {
-            PackEntry::File { access_time, .. } => *access_time,
+            &PackEntry::File { access_time, .. } => access_time.into_systime(),
             _ => unreachable!(),
         }
     }
 
-    pub fn create_time(&self) -> FILETIME {
+    pub fn create_time(&self) -> Option<SystemTime> {
         match self.entry() {
-            PackEntry::File { create_time, .. } => *create_time,
+            &PackEntry::File { create_time, .. } => create_time.into_systime(),
             _ => unreachable!(),
         }
     }
@@ -147,44 +148,44 @@ where
         }
     }
 
-    pub fn modify_time(&self) -> FILETIME {
+    pub fn modify_time(&self) -> Option<SystemTime> {
         match self.entry() {
-            PackEntry::File { modify_time, .. } => *modify_time,
+            &PackEntry::File { modify_time, .. } => modify_time.into_systime(),
             _ => unreachable!(),
         }
     }
 
-    pub fn access_time(&self) -> FILETIME {
+    pub fn access_time(&self) -> Option<SystemTime> {
         match self.entry() {
-            PackEntry::File { access_time, .. } => *access_time,
+            &PackEntry::File { access_time, .. } => access_time.into_systime(),
             _ => unreachable!(),
         }
     }
 
-    pub fn create_time(&self) -> FILETIME {
+    pub fn create_time(&self) -> Option<SystemTime> {
         match self.entry() {
-            PackEntry::File { create_time, .. } => *create_time,
+            &PackEntry::File { create_time, .. } => create_time.into_systime(),
             _ => unreachable!(),
         }
     }
 
-    pub fn modify_time_mut(&mut self) -> &mut FILETIME {
+    pub fn set_modify_time(&mut self, time: SystemTime) {
         match self.entry_mut() {
-            PackEntry::File { modify_time, .. } => modify_time,
+            PackEntry::File { modify_time, .. } => *modify_time = time.into(),
             _ => unreachable!(),
         }
     }
 
-    pub fn access_time_mut(&mut self) -> &mut FILETIME {
+    pub fn set_access_time(&mut self, time: SystemTime) {
         match self.entry_mut() {
-            PackEntry::File { access_time, .. } => access_time,
+            PackEntry::File { access_time, .. } => *access_time = time.into(),
             _ => unreachable!(),
         }
     }
 
-    pub fn create_time_mut(&mut self) -> &mut FILETIME {
+    pub fn set_create_time(&mut self, time: SystemTime) {
         match self.entry_mut() {
-            PackEntry::File { create_time, .. } => create_time,
+            PackEntry::File { create_time, .. } => *create_time = time.into(),
             _ => unreachable!(),
         }
     }
@@ -350,6 +351,7 @@ where
                 .get_chain(self.chain)
                 .and_then(|chain| chain.file_offset_for_entry(self.entry_index))
                 .unwrap();
+            self.set_modify_time(SystemTime::now());
             self.archive.file.write_entry_at(entry_offset, self.entry())
         } else {
             Ok(())
@@ -406,6 +408,27 @@ impl<'pk2, B> Directory<'pk2, B> {
     pub fn name(&self) -> &str {
         match self.entry() {
             PackEntry::Directory { name, .. } => name,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn modify_time(&self) -> Option<SystemTime> {
+        match self.entry() {
+            &PackEntry::File { modify_time, .. } => modify_time.into_systime(),
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn access_time(&self) -> Option<SystemTime> {
+        match self.entry() {
+            &PackEntry::File { access_time, .. } => access_time.into_systime(),
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn create_time(&self) -> Option<SystemTime> {
+        match self.entry() {
+            &PackEntry::File { create_time, .. } => create_time.into_systime(),
             _ => unreachable!(),
         }
     }

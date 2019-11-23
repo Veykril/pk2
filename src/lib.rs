@@ -12,18 +12,14 @@ pub use self::archive::Pk2;
 mod buffer;
 pub(crate) use self::buffer::ArchiveBuffer;
 
+mod filetime;
+pub(crate) use self::filetime::FILETIME;
+
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ChainIndex(pub u64);
 
 pub(crate) type Blowfish =
     block_modes::Ecb<blowfish::BlowfishLE, block_modes::block_padding::ZeroPadding>;
-
-#[allow(non_snake_case)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct FILETIME {
-    dwLowDateTime: u32,
-    dwHighDateTime: u32,
-}
 
 /// Magic Numbers and definitions
 #[allow(dead_code)]

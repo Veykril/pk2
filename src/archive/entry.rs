@@ -46,11 +46,12 @@ impl PackEntry {
         pos_children: ChainIndex,
         next_block: Option<NonZeroU64>,
     ) -> Self {
+        let ftime = FILETIME::now();
         PackEntry::Directory {
             name,
-            access_time: Default::default(),
-            create_time: Default::default(),
-            modify_time: Default::default(),
+            access_time: ftime,
+            create_time: ftime,
+            modify_time: ftime,
             pos_children,
             next_block,
         }
@@ -62,11 +63,12 @@ impl PackEntry {
         size: u32,
         next_block: Option<NonZeroU64>,
     ) -> Self {
+        let ftime = FILETIME::now();
         PackEntry::File {
             name,
-            access_time: Default::default(),
-            create_time: Default::default(),
-            modify_time: Default::default(),
+            access_time: ftime,
+            create_time: ftime,
+            modify_time: ftime,
             pos_data,
             size,
             next_block,
@@ -156,14 +158,17 @@ impl PackEntry {
                     dwLowDateTime: r.read_u32::<LE>()?,
                     dwHighDateTime: r.read_u32::<LE>()?,
                 };
+                dbg!(&access_time);
                 let create_time = FILETIME {
                     dwLowDateTime: r.read_u32::<LE>()?,
                     dwHighDateTime: r.read_u32::<LE>()?,
                 };
+                dbg!(&create_time);
                 let modify_time = FILETIME {
                     dwLowDateTime: r.read_u32::<LE>()?,
                     dwHighDateTime: r.read_u32::<LE>()?,
                 };
+                dbg!(&modify_time);
                 let position = r.read_u64::<LE>()?;
                 let size = r.read_u32::<LE>()?;
                 let next_block = NonZeroU64::new(r.read_u64::<LE>()?);

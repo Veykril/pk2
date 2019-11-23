@@ -1,5 +1,6 @@
 use clap::{crate_authors, crate_description, crate_name, crate_version};
 use clap::{App, Arg, ArgMatches, SubCommand};
+use filetime::FileTime;
 
 use std::path::{Path, PathBuf};
 
@@ -48,6 +49,12 @@ fn extract_app() -> App<'static, 'static> {
                 .takes_value(true)
                 .help("Sets the output path to extract to"),
         )
+        .arg(
+            Arg::with_name("time")
+                .short("t")
+                .long("time")
+                .help("If passed, writes file times to the extracted files"),
+        )
 }
 
 fn extract(matches: &ArgMatches<'static>) {
@@ -57,14 +64,15 @@ fn extract(matches: &ArgMatches<'static>) {
         .value_of_os("out")
         .map(PathBuf::from)
         .unwrap_or_else(|| archive_path.with_extension(""));
+    let write_times = matches.is_present("time");
     let archive = pk2::Pk2::open(archive_path, key)
         .expect(&format!("failed to open archive at {:?}", archive_path));
     let folder = archive.open_directory("/").unwrap();
     println!("Extracting {:?} to {:?}.", archive_path, out_path);
-    extract_files(folder, &out_path);
+    extract_files(folder, &out_path, write_times);
 }
 
-fn extract_files(folder: pk2::Directory<'_>, out_path: &Path) {
+fn extract_files(folder: pk2::Directory<'_>, out_path: &Path, write_times: bool) {
     use std::io::Read;
     let _ = std::fs::create_dir(out_path);
     let mut buf = Vec::new();
@@ -75,13 +83,22 @@ fn extract_files(folder: pk2::Directory<'_>, out_path: &Path) {
                 let file_path = out_path.join(file.name());
                 if let Err(e) = std::fs::write(&file_path, &buf) {
                     eprintln!("Failed writing file at {:?}: {}", file_path, e);
+                } else if write_times {
+                    if let Some(time) = file.modify_time() {
+                        let _ =
+                            filetime::set_file_mtime(&file_path, FileTime::from_system_time(time));
+                    }
+                    if let Some(time) = file.access_time() {
+                        let _ =
+                            filetime::set_file_atime(&file_path, FileTime::from_system_time(time));
+                    }
                 }
                 buf.clear();
             }
             pk2::DirEntry::Directory(dir) => {
                 let dir_name = dir.name();
                 let path = out_path.join(dir_name);
-                extract_files(dir, &path);
+                extract_files(dir, &path, write_times);
             }
         }
     }
