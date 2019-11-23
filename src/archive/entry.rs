@@ -158,17 +158,14 @@ impl PackEntry {
                     dwLowDateTime: r.read_u32::<LE>()?,
                     dwHighDateTime: r.read_u32::<LE>()?,
                 };
-                dbg!(&access_time);
                 let create_time = FILETIME {
                     dwLowDateTime: r.read_u32::<LE>()?,
                     dwHighDateTime: r.read_u32::<LE>()?,
                 };
-                dbg!(&create_time);
                 let modify_time = FILETIME {
                     dwLowDateTime: r.read_u32::<LE>()?,
                     dwHighDateTime: r.read_u32::<LE>()?,
                 };
-                dbg!(&modify_time);
                 let position = r.read_u64::<LE>()?;
                 let size = r.read_u32::<LE>()?;
                 let next_block = NonZeroU64::new(r.read_u64::<LE>()?);

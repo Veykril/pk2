@@ -1,9 +1,10 @@
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::ops;
 
 use crate::archive::entry::PackEntry;
 use crate::constants::*;
 use crate::error::{Error, Pk2Result};
+use crate::ArchiveBuffer;
 use crate::ChainIndex;
 
 /// A collection of [`PackBlock`]s where each blocks next_block field points to
@@ -48,6 +49,11 @@ impl PackBlockChain {
             .find(|(_, entry)| entry.is_empty())
     }
 
+    /// Returns the number of PackEntries in this chain.
+    pub(crate) fn num_entries(&self) -> usize {
+        self.blocks.len() * PK2_FILE_BLOCK_ENTRY_COUNT
+    }
+
     /// An iterator over the entries of this chain.
     pub(crate) fn entries(&self) -> impl Iterator<Item = &PackEntry> {
         self.blocks.iter().flat_map(|block| &block.entries)
@@ -86,6 +92,26 @@ impl PackBlockChain {
             }
         }
         Err(Error::NotFound)
+    }
+
+    /// Creates a new block in the file, appends it to this chain and returns
+    /// the entry index of the first entry of the new block relative to the
+    /// chain.
+    pub fn create_new_block<B: Write + Seek>(
+        &mut self,
+        file: &mut ArchiveBuffer<B>,
+    ) -> Pk2Result<usize> {
+        let new_block_offset = file.len()?;
+        let block = PackBlock::new(new_block_offset);
+        file.write_block(&block)?;
+        let last_idx = self.num_entries() - 1;
+        self[last_idx].set_next_block(new_block_offset);
+        file.write_entry_at(
+            self.file_offset_for_entry(last_idx).unwrap(),
+            &self[last_idx],
+        )?;
+        self.push(block);
+        Ok(last_idx + 1)
     }
 }
 

@@ -237,16 +237,14 @@ where
     /// This function traverses the whole path creating anything that does not
     /// yet exist returning the last created entry. This means using parent and
     /// current dir parts in a path that in the end directs to an already
-    /// existing path might still create new directories. TODO: Experiment
-    /// with a recursive version to avoid borrowck?
+    /// existing path might still create new directories.
     fn create_entry_at(
         &mut self,
         chain: ChainIndex,
         path: &Path,
     ) -> Pk2Result<(ChainIndex, usize)> {
-        let (mut current_chain_index, path) =
+        let (mut current_chain_index, mut components) =
             self.block_manager.validate_dir_path_until(chain, path)?;
-        let mut components = path.components().peekable();
         while let Some(component) = components.next() {
             match component {
                 Component::Normal(p) => {
@@ -256,49 +254,23 @@ where
                         .ok_or(Error::InvalidChainIndex)?;
                     let chain_entry_idx = match current_chain.find_first_empty_mut() {
                         Some((idx, _)) => idx,
-                        None => {
-                            // current chain is full so create a new block and append it
-                            let new_block_offset = self.file.len()?;
-                            let block = PackBlock::new(new_block_offset);
-                            self.file.write_block(&block)?;
-                            let last_idx = current_chain.entries_mut().count() - 1;
-                            current_chain[last_idx].set_next_block(new_block_offset);
-                            self.file.write_entry_at(
-                                current_chain.file_offset_for_entry(last_idx).unwrap(),
-                                &current_chain[last_idx],
-                            )?;
-                            current_chain.push(block);
-                            last_idx + 1
-                        }
+                        // current chain is full so create a new block and append it
+                        None => current_chain.create_new_block(&mut self.file)?,
                     };
                     // Are we done after this? if not, create a new blockchain since this is a new
                     // directory
                     if components.peek().is_some() {
-                        let new_chain_offset = self.file.len().map(ChainIndex)?;
-                        let entry = &mut current_chain[chain_entry_idx];
-                        *entry = PackEntry::new_directory(
-                            p.to_str()
-                                .map(ToOwned::to_owned)
-                                .ok_or(Error::NonUnicodePath)?,
-                            new_chain_offset,
-                            entry.next_block(),
-                        );
-                        let offset = current_chain
-                            .file_offset_for_entry(chain_entry_idx)
-                            .unwrap();
-                        let mut block = PackBlock::new(new_chain_offset.0);
-                        block[0] =
-                            PackEntry::new_directory(".".to_string(), new_chain_offset, None);
-                        block[1] = PackEntry::new_directory(
-                            "..".to_string(),
-                            current_chain.chain_index(),
-                            None,
-                        );
-                        self.file.write_block(&block)?;
-                        self.file
-                            .write_entry_at(offset, &current_chain[chain_entry_idx])?;
-                        self.block_manager
-                            .insert(new_chain_offset, PackBlockChain::from_blocks(vec![block]));
+                        let dir_name = p
+                            .to_str()
+                            .map(ToOwned::to_owned)
+                            .ok_or(Error::NonUnicodePath)?;
+                        let (new_chain_offset, block_chain) = Self::create_new_block_chain(
+                            &mut self.file,
+                            current_chain,
+                            dir_name,
+                            chain_entry_idx,
+                        )?;
+                        self.block_manager.insert(new_chain_offset, block_chain);
                         current_chain_index = new_chain_offset;
                     } else {
                         return Ok((current_chain.chain_index(), chain_entry_idx));
@@ -323,6 +295,26 @@ where
             }
         }
         Err(Error::AlreadyExists)
+    }
+
+    fn create_new_block_chain(
+        file: &mut ArchiveBuffer<B>,
+        current_chain: &mut PackBlockChain,
+        dir_name: String,
+        chain_entry_idx: usize,
+    ) -> Pk2Result<(ChainIndex, PackBlockChain)> {
+        let new_chain_offset = file.len().map(ChainIndex)?;
+        let entry = &mut current_chain[chain_entry_idx];
+        *entry = PackEntry::new_directory(dir_name, new_chain_offset, entry.next_block());
+        let offset = current_chain
+            .file_offset_for_entry(chain_entry_idx)
+            .unwrap();
+        let mut block = PackBlock::new(new_chain_offset.0);
+        block[0] = PackEntry::new_directory(".".to_string(), new_chain_offset, None);
+        block[1] = PackEntry::new_directory("..".to_string(), current_chain.chain_index(), None);
+        file.write_block(&block)?;
+        file.write_entry_at(offset, &current_chain[chain_entry_idx])?;
+        Ok((new_chain_offset, PackBlockChain::from_blocks(vec![block])))
     }
 }
 

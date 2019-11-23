@@ -15,21 +15,6 @@ pub(crate) struct ArchiveBuffer<B> {
     bf: Option<UnsafeCell<Blowfish>>,
 }
 
-/*
-impl<B> Drop for ArchiveBuffer<B>
-where
-    B: Read + Write + Seek,
-{
-    fn drop(&mut self) {
-        let len = self.len().unwrap_or(0) as usize;
-        // Apparently 4kb is the minimum archive size that the dll requires
-        if len < 4096 {
-            let _ = self.file.borrow_mut().write_all(&[0; 4096][..4096 - len]);
-        }
-    }
-}
-*/
-
 impl<B> ArchiveBuffer<B> {
     pub(crate) fn new(file: B, bf: Option<Blowfish>) -> Self {
         ArchiveBuffer {

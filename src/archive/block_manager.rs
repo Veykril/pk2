@@ -41,7 +41,7 @@ impl BlockManager {
         let mut blocks = Vec::new();
         loop {
             let block = file.read_block_at(offset)?;
-            let nc = block.entries().rev().find_map(PackEntry::next_block);
+            let nc = block.entries().last().and_then(PackEntry::next_block);
             blocks.push(block);
             match nc {
                 Some(nc) => offset = nc.get(),
@@ -111,16 +111,15 @@ impl BlockManager {
     }
 
     /// Traverses the path until it hits a non-existent component and returns
-    /// the rest of the path as well as the chain index of the last valid part.
-    /// FIXME: This function is possibly broken for directories that are nesed.
+    /// the rest of the path as a peekable as well as the chain index of the
+    /// last valid part.
     pub(crate) fn validate_dir_path_until<'p>(
         &self,
         mut chain: ChainIndex,
         path: &'p Path,
-    ) -> Pk2Result<(ChainIndex, &'p Path)> {
-        let components = path.components();
-        let mut n = 0usize;
-        for component in components {
+    ) -> Pk2Result<(ChainIndex, std::iter::Peekable<std::path::Components<'p>>)> {
+        let mut components = path.components().peekable();
+        while let Some(component) = components.peek() {
             let name = component
                 .as_os_str()
                 .to_str()
@@ -131,29 +130,21 @@ impl BlockManager {
                 .ok_or(Error::InvalidChainIndex)
                 .and_then(|chain| chain.find_block_chain_index_of(name))
             {
-                Ok(i) => {
-                    chain = i;
-                    n += 1;
-                }
+                Ok(i) => chain = i,
                 Err(Error::NotFound) => {
-                    if component == Component::ParentDir {
+                    if component == &Component::ParentDir {
+                        // lies outside of the archive
                         return Err(Error::InvalidPath);
                     } else {
+                        // found a non-existent part, we are done here
                         break;
                     }
                 }
-                // the current name already exists as a file or the chain index was invalid
-                Err(e) => {
-                    return Err(e);
-                }
+                Err(e) => return Err(e),
             }
+            let _ = components.next();
         }
-        let mut components = path.components();
-        // discard the first n elements
-        if n > 0 {
-            components.by_ref().nth(n - 1);
-        }
-        Ok((chain, components.as_path()))
+        Ok((chain, components))
     }
 }
 
@@ -166,6 +157,7 @@ impl std::hash::BuildHasher for NoHashHasherBuilder {
         NoHashHasher(0)
     }
 }
+
 struct NoHashHasher(u64);
 impl std::hash::Hasher for NoHashHasher {
     #[inline]
