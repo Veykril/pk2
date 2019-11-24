@@ -17,7 +17,7 @@ mod header;
 
 pub(crate) use self::block_chain::{PackBlock, PackBlockChain};
 pub(crate) use self::block_manager::BlockManager;
-pub(crate) use self::entry::PackEntry;
+pub(crate) use self::entry::*;
 pub(crate) use self::header::PackHeader;
 
 pub struct Pk2<B = fs::File> {
@@ -146,7 +146,7 @@ impl<B> Pk2<B> {
     fn root_resolve_path_to_entry_and_parent<P: AsRef<Path>>(
         &self,
         path: P,
-    ) -> Pk2Result<Option<(&PackBlockChain, usize, &PackEntry)>> {
+    ) -> Pk2Result<(&PackBlockChain, usize, &PackEntry)> {
         self.block_manager
             .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)
     }
@@ -168,22 +168,25 @@ impl<B> Pk2<B> {
 
 impl<B> Pk2<B> {
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Pk2Result<File<B>> {
-        let (chain, entry_idx, entry) = self
-            .root_resolve_path_to_entry_and_parent(path)
-            .and_then(|opt| opt.ok_or(Error::ExpectedFile))?;
+        let (chain, entry_idx, entry) = self.root_resolve_path_to_entry_and_parent(path)?;
         Self::is_file(entry)?;
         let chain = chain.chain_index();
         Ok(File::new(self, chain, entry_idx))
     }
 
     pub fn open_directory<P: AsRef<Path>>(&self, path: P) -> Pk2Result<Directory<B>> {
-        let (chain, entry_idx) = match self.root_resolve_path_to_entry_and_parent(path)? {
-            Some((chain, entry_idx, entry)) => {
+        let path = check_root(path.as_ref())?;
+        let (chain, entry_idx) = match self
+            .block_manager
+            .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, path)
+        {
+            Ok((chain, entry_idx, entry)) => {
                 Self::is_dir(entry)?;
                 (chain.chain_index(), entry_idx)
             }
             // path was just root
-            None => (PK2_ROOT_BLOCK, 0),
+            Err(Error::InvalidPath) => (PK2_ROOT_BLOCK, 0),
+            Err(e) => return Err(e),
         };
         Ok(Directory::new(self, chain, entry_idx))
     }
@@ -194,9 +197,7 @@ where
     B: io::Read + io::Write + io::Seek,
 {
     pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<FileMut<B>> {
-        let (chain, entry_idx, entry) = self
-            .root_resolve_path_to_entry_and_parent(path)
-            .and_then(|opt| opt.ok_or(Error::ExpectedFile))?;
+        let (chain, entry_idx, entry) = self.root_resolve_path_to_entry_and_parent(path)?;
         Self::is_file(entry)?;
         let chain = chain.chain_index();
         Ok(FileMut::new(self, chain, entry_idx))
@@ -205,9 +206,7 @@ where
     /// Currently only replaces the entry with an empty one making the data
     /// inaccessible by normal means
     pub fn delete_file<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<()> {
-        let (chain, entry_idx, entry) = self
-            .root_resolve_path_to_entry_and_parent(path)
-            .and_then(|opt| opt.ok_or(Error::ExpectedFile))?;
+        let (chain, entry_idx, entry) = self.root_resolve_path_to_entry_and_parent(path)?;
         Self::is_file(entry)?;
 
         let next_block = entry.next_block();
@@ -216,7 +215,7 @@ where
         self.get_entry_mut(chain_index, entry_idx)
             .map(PackEntry::clear);
         self.file
-            .write_entry_at(file_offset, &PackEntry::Empty { next_block })?;
+            .write_entry_at(file_offset, &PackEntry::new_empty(next_block))?;
         Ok(())
     }
 
@@ -252,10 +251,12 @@ where
                         .block_manager
                         .get_mut(current_chain_index)
                         .ok_or(Error::InvalidChainIndex)?;
-                    let chain_entry_idx = match current_chain.find_first_empty_mut() {
-                        Some((idx, _)) => idx,
+                    let empty_pos = current_chain.entries().position(PackEntry::is_empty);
+                    let chain_entry_idx = if let Some(idx) = empty_pos {
+                        idx
+                    } else {
                         // current chain is full so create a new block and append it
-                        None => current_chain.create_new_block(&mut self.file)?,
+                        current_chain.create_new_block(&mut self.file)?
                     };
                     // Are we done after this? if not, create a new blockchain since this is a new
                     // directory
@@ -283,12 +284,9 @@ where
                         .get_mut(current_chain_index)
                         .ok_or(Error::InvalidChainIndex)?
                         .entries()
-                        .find_map(|entry| match entry {
-                            PackEntry::Directory {
-                                name, pos_children, ..
-                            } if name == ".." => Some(*pos_children),
-                            _ => None,
-                        })
+                        .flat_map(PackEntry::as_directory)
+                        .find(|dir| dir.is_parent())
+                        .map(DirectoryEntry::pos_children)
                         .ok_or(Error::InvalidPath)?;
                 }
                 _ => unreachable!(),

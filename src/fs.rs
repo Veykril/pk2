@@ -2,7 +2,7 @@
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::time::SystemTime;
 
-use crate::archive::{PackBlockChain, PackEntry, Pk2};
+use crate::archive::{DirectoryEntry, FileEntry, PackBlockChain, PackEntry, Pk2};
 use crate::ChainIndex;
 
 pub struct File<'pk2, B = std::fs::File> {
@@ -25,57 +25,34 @@ impl<'pk2, B> File<'pk2, B> {
     }
 
     pub fn modify_time(&self) -> Option<SystemTime> {
-        match self.entry() {
-            &PackEntry::File { modify_time, .. } => modify_time.into_systime(),
-            _ => unreachable!(),
-        }
+        self.entry().modify_time.into_systime()
     }
 
     pub fn access_time(&self) -> Option<SystemTime> {
-        match self.entry() {
-            &PackEntry::File { access_time, .. } => access_time.into_systime(),
-            _ => unreachable!(),
-        }
+        self.entry().access_time.into_systime()
     }
 
     pub fn create_time(&self) -> Option<SystemTime> {
-        match self.entry() {
-            &PackEntry::File { create_time, .. } => create_time.into_systime(),
-            _ => unreachable!(),
-        }
+        self.entry().create_time.into_systime()
     }
 
     #[inline]
     pub fn name(&self) -> &str {
-        match self.entry() {
-            PackEntry::File { name, .. } => name,
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn path(&self) -> &str {
-        unimplemented!()
+        self.entry().name()
     }
 
     #[inline]
-    fn entry(&self) -> &PackEntry {
+    fn entry(&self) -> &FileEntry {
         self.archive
             .get_entry(self.chain, self.entry_index)
+            .and_then(PackEntry::as_file)
             .expect("invalid file object, this is a bug")
-    }
-
-    #[inline]
-    fn pos_data_and_size(&self) -> (u64, u32) {
-        match *self.entry() {
-            PackEntry::File { pos_data, size, .. } => (pos_data, size),
-            _ => unreachable!(),
-        }
     }
 }
 
 impl<B> Seek for File<'_, B> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let size = self.pos_data_and_size().1 as u64;
+        let size = self.entry().size() as u64;
         let (base_pos, offset) = match pos {
             SeekFrom::Start(n) => {
                 self.seek_pos = n.min(size);
@@ -102,7 +79,8 @@ where
     B: Read + Seek,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let (pos_data, size) = self.pos_data_and_size();
+        let pos_data = self.entry().pos_data();
+        let size = self.entry().size();
         let n = {
             let mut file = self.archive.file.file();
             file.seek(SeekFrom::Start(pos_data + self.seek_pos as u64))?;
@@ -115,7 +93,7 @@ where
 
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
         let len = buf.len();
-        let size = self.pos_data_and_size().1 as usize;
+        let size = self.entry().size() as usize;
         buf.resize(len + size as usize, 0);
         self.read(&mut buf[len..])
     }
@@ -149,83 +127,61 @@ where
     }
 
     pub fn modify_time(&self) -> Option<SystemTime> {
-        match self.entry() {
-            &PackEntry::File { modify_time, .. } => modify_time.into_systime(),
-            _ => unreachable!(),
-        }
+        self.entry().modify_time.into_systime()
     }
 
     pub fn access_time(&self) -> Option<SystemTime> {
-        match self.entry() {
-            &PackEntry::File { access_time, .. } => access_time.into_systime(),
-            _ => unreachable!(),
-        }
+        self.entry().access_time.into_systime()
     }
 
     pub fn create_time(&self) -> Option<SystemTime> {
-        match self.entry() {
-            &PackEntry::File { create_time, .. } => create_time.into_systime(),
-            _ => unreachable!(),
-        }
+        self.entry().create_time.into_systime()
     }
 
     pub fn set_modify_time(&mut self, time: SystemTime) {
-        match self.entry_mut() {
-            PackEntry::File { modify_time, .. } => *modify_time = time.into(),
-            _ => unreachable!(),
-        }
+        self.entry_mut().modify_time = time.into();
     }
 
     pub fn set_access_time(&mut self, time: SystemTime) {
-        match self.entry_mut() {
-            PackEntry::File { access_time, .. } => *access_time = time.into(),
-            _ => unreachable!(),
-        }
+        self.entry_mut().access_time = time.into();
     }
 
     pub fn set_create_time(&mut self, time: SystemTime) {
-        match self.entry_mut() {
-            PackEntry::File { create_time, .. } => *create_time = time.into(),
-            _ => unreachable!(),
-        }
+        self.entry_mut().create_time = time.into();
+    }
+
+    pub fn copy_file_times<'a, A>(&mut self, other: &File<'a, A>) {
+        let this = self.entry_mut();
+        let other = other.entry();
+        this.modify_time = other.modify_time;
+        this.create_time = other.create_time;
+        this.access_time = other.access_time;
     }
 
     #[inline]
     pub fn name(&self) -> &str {
-        match self.entry() {
-            PackEntry::File { name, .. } => name,
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn path(&self) -> &str {
-        unimplemented!()
+        self.entry().name()
     }
 
     #[inline]
-    fn entry(&self) -> &PackEntry {
+    fn entry(&self) -> &FileEntry {
         self.archive
             .get_entry(self.chain, self.entry_index)
+            .and_then(PackEntry::as_file)
             .expect("invalid file object, this is a bug")
     }
 
     #[inline]
-    fn entry_mut(&mut self) -> &mut PackEntry {
+    fn entry_mut(&mut self) -> &mut FileEntry {
         self.archive
             .get_entry_mut(self.chain, self.entry_index)
+            .and_then(PackEntry::as_file_mut)
             .expect("invalid file object, this is a bug")
-    }
-
-    #[inline]
-    fn pos_data_and_size(&self) -> (u64, u32) {
-        match *self.entry() {
-            PackEntry::File { pos_data, size, .. } => (pos_data, size),
-            _ => unreachable!(),
-        }
     }
 
     fn fetch_data(&mut self) -> io::Result<()> {
-        let (pos_data, size) = self.pos_data_and_size();
+        let pos_data = self.entry().pos_data();
+        let size = self.entry().size();
         self.data.resize(size as usize, 0);
         let mut file = self.archive.file.file();
         file.seek(SeekFrom::Start(pos_data as u64))?;
@@ -239,7 +195,7 @@ where
     B: Read + Write + Seek,
 {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let size = self.data.len().max(self.pos_data_and_size().1 as usize) as u64;
+        let size = self.data.len().max(self.entry().size() as usize) as u64;
         let (base_pos, offset) = match pos {
             SeekFrom::Start(n) => {
                 self.seek_pos = n.min(size);
@@ -276,7 +232,7 @@ where
             self.seek(SeekFrom::Current(len as i64))?;
             Ok(len)
         // we dont have the data yet so fetch it then read again
-        } else if self.pos_data_and_size().1 > 0 {
+        } else if self.entry().size() > 0 {
             self.fetch_data()?;
             self.read(buf)
         } else {
@@ -286,7 +242,7 @@ where
 
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
         let len = buf.len();
-        let size = self.data.len().max(self.pos_data_and_size().1 as usize);
+        let size = self.data.len().max(self.entry().size() as usize);
         buf.resize(len + size as usize, 0);
         self.read(&mut buf[len..])
     }
@@ -297,7 +253,7 @@ where
     B: Read + Write + Seek,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let (_, size) = self.pos_data_and_size();
+        let size = self.entry().size();
         if !self.data.is_empty() {
             let data_len = self.data.len();
             let seek_pos = self.seek_pos as usize;
@@ -329,9 +285,10 @@ where
                     .block_manager
                     .get_mut(self.chain)
                     .and_then(|chain| chain.get_mut(entry_index))
+                    .and_then(PackEntry::as_file_mut)
                 {
-                    Some(PackEntry::File { pos_data, size, .. }) => (pos_data, size),
-                    _ => panic!("invalid file object, this is a bug"),
+                    Some(FileEntry { pos_data, size, .. }) => (pos_data, size),
+                    None => panic!("invalid file object, this is a bug"),
                 }
             };
             // new unwritten file/more data than what fits, so use a new block
@@ -352,7 +309,12 @@ where
                 .and_then(|chain| chain.file_offset_for_entry(self.entry_index))
                 .unwrap();
             self.set_modify_time(SystemTime::now());
-            self.archive.file.write_entry_at(entry_offset, self.entry())
+            self.archive.file.write_entry_at(
+                entry_offset,
+                self.archive
+                    .get_entry(self.chain, self.entry_index)
+                    .unwrap(),
+            )
         } else {
             Ok(())
         }
@@ -384,10 +346,11 @@ impl<'pk2, B> Directory<'pk2, B> {
     }
 
     #[inline]
-    fn entry(&self) -> &PackEntry {
+    fn entry(&self) -> &DirectoryEntry {
         self.archive
             .get_entry(self.chain, self.entry_index)
-            .expect("invalid dir object, this is a bug")
+            .and_then(PackEntry::as_directory)
+            .expect("invalid file object, this is a bug")
     }
 
     // returns the chain this folder represents
@@ -398,69 +361,54 @@ impl<'pk2, B> Directory<'pk2, B> {
             .expect("invalid dir object, this is a bug")
     }
 
-    fn pos_children(&self) -> ChainIndex {
-        match self.entry() {
-            PackEntry::Directory { pos_children, .. } => *pos_children,
-            _ => unreachable!(),
-        }
-    }
-
     pub fn name(&self) -> &str {
-        match self.entry() {
-            PackEntry::Directory { name, .. } => name,
-            _ => unreachable!(),
-        }
+        self.entry().name()
     }
 
     pub fn modify_time(&self) -> Option<SystemTime> {
-        match self.entry() {
-            &PackEntry::File { modify_time, .. } => modify_time.into_systime(),
-            _ => unreachable!(),
-        }
+        self.entry().modify_time.into_systime()
     }
 
     pub fn access_time(&self) -> Option<SystemTime> {
-        match self.entry() {
-            &PackEntry::File { access_time, .. } => access_time.into_systime(),
-            _ => unreachable!(),
-        }
+        self.entry().access_time.into_systime()
     }
 
     pub fn create_time(&self) -> Option<SystemTime> {
-        match self.entry() {
-            &PackEntry::File { create_time, .. } => create_time.into_systime(),
-            _ => unreachable!(),
-        }
+        self.entry().create_time.into_systime()
     }
 
     /// Returns an iterator over all files in this directory.
     pub fn files(&'pk2 self) -> impl Iterator<Item = File<'pk2, B>> {
-        let chain = self.pos_children();
+        let chain = self.entry().pos_children();
         self.dir_chain(chain)
             .entries()
             .enumerate()
-            .flat_map(move |(idx, entry)| match entry {
-                PackEntry::File { .. } => Some(File::new(self.archive, chain, idx)),
-                _ => None,
+            .flat_map(move |(idx, entry)| {
+                entry.as_file().map(|_| File::new(self.archive, chain, idx))
             })
     }
 
     /// Returns an iterator over all items in this directory excluding `.` and
     /// `..`.
     pub fn entries(&'pk2 self) -> impl Iterator<Item = DirEntry<'pk2, B>> {
-        let chain = self.pos_children();
+        let chain = self.entry().pos_children();
         self.dir_chain(chain)
             .entries()
             .enumerate()
             .flat_map(move |(idx, entry)| match entry {
-                PackEntry::Directory { name, .. } if name == "." || name == ".." => None,
-                PackEntry::File { .. } => Some(DirEntry::File(File::new(self.archive, chain, idx))),
-                PackEntry::Directory { .. } => Some(DirEntry::Directory(Directory::new(
-                    self.archive,
-                    chain,
-                    idx,
-                ))),
-                PackEntry::Empty { .. } => None,
+                PackEntry::File(_) => Some(DirEntry::File(File::new(self.archive, chain, idx))),
+                PackEntry::Directory(dir) => {
+                    if dir.is_normal() {
+                        Some(DirEntry::Directory(Directory::new(
+                            self.archive,
+                            chain,
+                            idx,
+                        )))
+                    } else {
+                        None
+                    }
+                }
+                PackEntry::Empty(_) => None,
             })
     }
 }

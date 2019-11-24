@@ -171,8 +171,9 @@ fn repack_files(out_archive: &mut pk2::Pk2, folder: pk2::Directory<'_>, path: &P
         match entry {
             pk2::DirEntry::File(mut file) => {
                 file.read_to_end(&mut buf).unwrap();
-                let mut file = out_archive.create_file(path.join(file.name())).unwrap();
-                file.write_all(&buf).unwrap();
+                let mut out_file = out_archive.create_file(path.join(file.name())).unwrap();
+                out_file.copy_file_times(&file);
+                out_file.write_all(&buf).unwrap();
                 buf.clear();
             }
             pk2::DirEntry::Directory(dir) => {

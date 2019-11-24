@@ -9,45 +9,32 @@ use crate::error::{Error, Pk2Result};
 use crate::ChainIndex;
 use crate::FILETIME;
 
-/// An entry of a [`PackBlock`].
 #[derive(Clone, Eq, PartialEq)]
-pub(crate) enum PackEntry {
-    Empty {
-        next_block: Option<NonZeroU64>,
-    },
-    Directory {
-        name: String,
-        access_time: FILETIME,
-        create_time: FILETIME,
-        modify_time: FILETIME,
-        pos_children: ChainIndex,
-        next_block: Option<NonZeroU64>,
-    },
-    File {
-        name: String,
-        access_time: FILETIME,
-        create_time: FILETIME,
-        modify_time: FILETIME,
-        pos_data: u64,
-        size: u32,
-        next_block: Option<NonZeroU64>,
-    },
+pub struct EmptyEntry {
+    next_block: Option<NonZeroU64>,
 }
 
-impl Default for PackEntry {
-    fn default() -> Self {
-        PackEntry::Empty { next_block: None }
+impl EmptyEntry {
+    #[inline]
+    fn new(next_block: Option<NonZeroU64>) -> Self {
+        EmptyEntry { next_block }
     }
 }
 
-impl PackEntry {
-    pub(crate) fn new_directory(
-        name: String,
-        pos_children: ChainIndex,
-        next_block: Option<NonZeroU64>,
-    ) -> Self {
+#[derive(Clone, Eq, PartialEq)]
+pub struct DirectoryEntry {
+    name: String,
+    pub(crate) access_time: FILETIME,
+    pub(crate) create_time: FILETIME,
+    pub(crate) modify_time: FILETIME,
+    pos_children: ChainIndex,
+    next_block: Option<NonZeroU64>,
+}
+
+impl DirectoryEntry {
+    fn new(name: String, pos_children: ChainIndex, next_block: Option<NonZeroU64>) -> Self {
         let ftime = FILETIME::now();
-        PackEntry::Directory {
+        DirectoryEntry {
             name,
             access_time: ftime,
             create_time: ftime,
@@ -57,14 +44,52 @@ impl PackEntry {
         }
     }
 
-    pub(crate) fn new_file(
+    #[inline]
+    pub(crate) fn pos_children(&self) -> ChainIndex {
+        self.pos_children
+    }
+
+    #[inline]
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[inline]
+    pub(crate) fn is_current(&self) -> bool {
+        self.name == "."
+    }
+
+    #[inline]
+    pub(crate) fn is_parent(&self) -> bool {
+        self.name == ".."
+    }
+
+    #[inline]
+    pub(crate) fn is_normal(&self) -> bool {
+        !(self.is_current() || self.is_parent())
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct FileEntry {
+    name: String,
+    pub(crate) access_time: FILETIME,
+    pub(crate) create_time: FILETIME,
+    pub(crate) modify_time: FILETIME,
+    pub(crate) pos_data: u64,
+    pub(crate) size: u32,
+    next_block: Option<NonZeroU64>,
+}
+
+impl FileEntry {
+    pub(crate) fn new(
         name: String,
         pos_data: u64,
         size: u32,
         next_block: Option<NonZeroU64>,
     ) -> Self {
         let ftime = FILETIME::now();
-        PackEntry::File {
+        FileEntry {
             name,
             access_time: ftime,
             create_time: ftime,
@@ -75,43 +100,119 @@ impl PackEntry {
         }
     }
 
+    #[inline]
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[inline]
+    pub(crate) fn pos_data(&self) -> u64 {
+        self.pos_data
+    }
+
+    #[inline]
+    pub(crate) fn size(&self) -> u32 {
+        self.size
+    }
+}
+
+/// An entry of a [`PackBlock`].
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) enum PackEntry {
+    Empty(EmptyEntry),
+    Directory(DirectoryEntry),
+    File(FileEntry),
+}
+
+impl Default for PackEntry {
+    fn default() -> Self {
+        PackEntry::Empty(EmptyEntry::new(None))
+    }
+}
+
+impl PackEntry {
+    pub(crate) fn new_directory(
+        name: String,
+        pos_children: ChainIndex,
+        next_block: Option<NonZeroU64>,
+    ) -> Self {
+        PackEntry::Directory(DirectoryEntry::new(name, pos_children, next_block))
+    }
+
+    pub(crate) fn new_file(
+        name: String,
+        pos_data: u64,
+        size: u32,
+        next_block: Option<NonZeroU64>,
+    ) -> Self {
+        PackEntry::File(FileEntry::new(name, pos_data, size, next_block))
+    }
+
+    pub(crate) fn new_empty(next_block: Option<NonZeroU64>) -> Self {
+        PackEntry::Empty(EmptyEntry::new(next_block))
+    }
+
+    #[inline]
+    pub(crate) fn as_directory(&self) -> Option<&DirectoryEntry> {
+        match self {
+            PackEntry::Directory(entry) => Some(entry),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn as_file(&self) -> Option<&FileEntry> {
+        match self {
+            PackEntry::File(entry) => Some(entry),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn as_file_mut(&mut self) -> Option<&mut FileEntry> {
+        match self {
+            PackEntry::File(entry) => Some(entry),
+            _ => None,
+        }
+    }
+
     pub(crate) fn clear(&mut self) {
         let next_block = match *self {
-            PackEntry::Empty { next_block }
-            | PackEntry::Directory { next_block, .. }
-            | PackEntry::File { next_block, .. } => next_block,
+            PackEntry::Empty(EmptyEntry { next_block })
+            | PackEntry::Directory(DirectoryEntry { next_block, .. })
+            | PackEntry::File(FileEntry { next_block, .. }) => next_block,
         };
-        *self = PackEntry::Empty { next_block };
+        *self = PackEntry::new_empty(next_block);
     }
 
     pub(crate) fn next_block(&self) -> Option<NonZeroU64> {
         match *self {
-            PackEntry::Empty { next_block }
-            | PackEntry::Directory { next_block, .. }
-            | PackEntry::File { next_block, .. } => next_block,
+            PackEntry::Empty(EmptyEntry { next_block })
+            | PackEntry::Directory(DirectoryEntry { next_block, .. })
+            | PackEntry::File(FileEntry { next_block, .. }) => next_block,
         }
     }
 
     pub(crate) fn set_next_block(&mut self, nc: u64) {
         match self {
-            PackEntry::Empty { .. } => (),
-            PackEntry::Directory { next_block, .. } | PackEntry::File { next_block, .. } => {
-                *next_block = NonZeroU64::new(nc)
-            }
+            PackEntry::Empty(EmptyEntry { next_block, .. })
+            | PackEntry::Directory(DirectoryEntry { next_block, .. })
+            | PackEntry::File(FileEntry { next_block, .. }) => *next_block = NonZeroU64::new(nc),
         }
     }
 
     pub(crate) fn name(&self) -> Option<&str> {
         match self {
-            PackEntry::Empty { .. } => None,
-            PackEntry::Directory { name, .. } | PackEntry::File { name, .. } => Some(name),
+            PackEntry::Empty(_) => None,
+            PackEntry::Directory(DirectoryEntry { name, .. })
+            | PackEntry::File(FileEntry { name, .. }) => Some(name),
         }
     }
 
     #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         match self {
-            PackEntry::Empty { .. } => true,
+            PackEntry::Empty(_) => true,
             _ => false,
         }
     }
@@ -119,7 +220,7 @@ impl PackEntry {
     #[inline]
     pub(crate) fn is_file(&self) -> bool {
         match self {
-            PackEntry::File { .. } => true,
+            PackEntry::File(_) => true,
             _ => false,
         }
     }
@@ -127,7 +228,7 @@ impl PackEntry {
     #[inline]
     pub(crate) fn is_dir(&self) -> bool {
         match self {
-            PackEntry::Directory { .. } => true,
+            PackEntry::Directory(_) => true,
             _ => false,
         }
     }
@@ -139,7 +240,7 @@ impl PackEntry {
         match r.read_u8()? {
             0 => {
                 r.read_exact(&mut [0; PK2_FILE_ENTRY_SIZE - 1])?; //seek to end of entry
-                Ok(PackEntry::Empty { next_block: None })
+                Ok(PackEntry::new_empty(None))
             }
             ty @ 1 | ty @ 2 => {
                 let name = {
@@ -172,16 +273,16 @@ impl PackEntry {
                 r.read_u16::<LE>()?; //padding
 
                 Ok(if ty == 1 {
-                    PackEntry::Directory {
+                    PackEntry::Directory(DirectoryEntry {
                         name,
                         access_time,
                         create_time,
                         modify_time,
                         pos_children: ChainIndex(position),
                         next_block,
-                    }
+                    })
                 } else {
-                    PackEntry::File {
+                    PackEntry::File(FileEntry {
                         name,
                         access_time,
                         create_time,
@@ -189,7 +290,7 @@ impl PackEntry {
                         pos_data: position,
                         size,
                         next_block,
-                    }
+                    })
                 })
             }
             _ => Err(Error::CorruptedFile),
@@ -198,20 +299,20 @@ impl PackEntry {
 
     pub(crate) fn to_writer<W: Write>(&self, mut w: W) -> io::Result<()> {
         match self {
-            PackEntry::Empty { next_block } => {
+            PackEntry::Empty(EmptyEntry { next_block }) => {
                 w.write_all(&[0; PK2_FILE_ENTRY_SIZE - 8])?;
-                w.write_u64::<LE>(next_block.map_or(0, |nc| nc.get()))
+                w.write_u64::<LE>(next_block.map_or(0, NonZeroU64::get))
                     .map_err(Into::into)
             }
-            PackEntry::Directory {
+            PackEntry::Directory(DirectoryEntry {
                 name,
                 access_time,
                 create_time,
                 modify_time,
                 pos_children: ChainIndex(position),
                 next_block,
-            }
-            | PackEntry::File {
+            })
+            | PackEntry::File(FileEntry {
                 name,
                 access_time,
                 create_time,
@@ -219,7 +320,7 @@ impl PackEntry {
                 pos_data: position,
                 next_block,
                 ..
-            } => {
+            }) => {
                 w.write_u8(if self.is_dir() { 1 } else { 2 })?;
                 let mut encoded = EUC_KR.encode(name).0.into_owned();
                 encoded.resize(81, 0);
@@ -231,12 +332,12 @@ impl PackEntry {
                 w.write_u32::<LE>(modify_time.dwLowDateTime)?;
                 w.write_u32::<LE>(modify_time.dwHighDateTime)?;
                 w.write_u64::<LE>(*position)?;
-                w.write_u32::<LE>(if let PackEntry::File { size, .. } = self {
+                w.write_u32::<LE>(if let PackEntry::File(FileEntry { size, .. }) = self {
                     *size
                 } else {
                     0
                 })?;
-                w.write_u64::<LE>(next_block.map_or(0, |nc| nc.get()))?;
+                w.write_u64::<LE>(next_block.map_or(0, NonZeroU64::get))?;
                 w.write_u16::<LE>(0)?;
                 Ok(())
             }

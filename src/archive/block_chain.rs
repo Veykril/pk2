@@ -41,14 +41,6 @@ impl PackBlockChain {
             })
     }
 
-    /// Fetches the first empty pack entry in this chain, returning its index in
-    /// this chain and a mutable reference to it.
-    pub(crate) fn find_first_empty_mut(&mut self) -> Option<(usize, &mut PackEntry)> {
-        self.entries_mut()
-            .enumerate()
-            .find(|(_, entry)| entry.is_empty())
-    }
-
     /// Returns the number of PackEntries in this chain.
     pub(crate) fn num_entries(&self) -> usize {
         self.blocks.len() * PK2_FILE_BLOCK_ENTRY_COUNT
@@ -57,11 +49,6 @@ impl PackBlockChain {
     /// An iterator over the entries of this chain.
     pub(crate) fn entries(&self) -> impl Iterator<Item = &PackEntry> {
         self.blocks.iter().flat_map(|block| &block.entries)
-    }
-
-    /// An iterator over the entries of this chain.
-    pub(crate) fn entries_mut(&mut self) -> impl Iterator<Item = &mut PackEntry> {
-        self.blocks.iter_mut().flat_map(|block| &mut block.entries)
     }
 
     /// Get the PackEntry at the specified offset.
@@ -82,16 +69,13 @@ impl PackBlockChain {
     /// offset of the ['PackBlockChain'] corresponding to the directory if
     /// successful.
     pub(crate) fn find_block_chain_index_of(&self, directory: &str) -> Pk2Result<ChainIndex> {
-        for entry in self.entries() {
-            if entry.name() == Some(directory) {
-                return match entry {
-                    &PackEntry::Directory { pos_children, .. } => Ok(pos_children),
-                    PackEntry::File { .. } => Err(Error::ExpectedDirectory),
-                    _ => continue,
-                };
-            }
-        }
-        Err(Error::NotFound)
+        self.entries()
+            .find(|entry| entry.name() == Some(directory))
+            .ok_or(Error::NotFound)
+            .and_then(|entry| match entry {
+                PackEntry::Directory(dir) => Ok(dir.pos_children()),
+                _ => Err(Error::ExpectedDirectory),
+            })
     }
 
     /// Creates a new block in the file, appends it to this chain and returns

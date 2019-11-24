@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io;
 use std::path::{Component, Path};
 
-use crate::archive::{PackBlockChain, PackEntry};
+use crate::archive::{DirectoryEntry, PackBlockChain, PackEntry};
 use crate::constants::PK2_ROOT_BLOCK;
 use crate::error::{Error, Pk2Result};
 use crate::ArchiveBuffer;
@@ -16,17 +16,17 @@ impl BlockManager {
     /// Parses the complete index of a pk2 file
     pub(crate) fn new<B: io::Read + io::Seek>(file: &ArchiveBuffer<B>) -> Pk2Result<Self> {
         let mut chains = HashMap::default();
-        let mut offsets = vec![PK2_ROOT_BLOCK.0];
+        let mut offsets = vec![PK2_ROOT_BLOCK];
         while let Some(offset) = offsets.pop() {
             let block_chain = Self::read_chain_from_file_at(file, offset)?;
             // put all folder offsets of this chain into the stack to parse them next
-            offsets.extend(block_chain.entries().filter_map(|entry| match entry {
-                PackEntry::Directory {
-                    name, pos_children, ..
-                } if !(name == "." || name == "..") => Some(pos_children.0),
-                _ => None,
+            offsets.extend(block_chain.entries().filter_map(|entry| {
+                entry
+                    .as_directory()
+                    .filter(|dir| dir.is_normal())
+                    .map(DirectoryEntry::pos_children)
             }));
-            chains.insert(ChainIndex(offset), block_chain);
+            chains.insert(offset, block_chain);
         }
         Ok(BlockManager { chains })
     }
@@ -36,7 +36,7 @@ impl BlockManager {
     /// specially crafted file.
     fn read_chain_from_file_at<B: io::Read + io::Seek>(
         file: &ArchiveBuffer<B>,
-        mut offset: u64,
+        ChainIndex(mut offset): ChainIndex,
     ) -> Pk2Result<PackBlockChain> {
         let mut blocks = Vec::new();
         loop {
@@ -72,7 +72,7 @@ impl BlockManager {
         &self,
         current_chain: ChainIndex,
         path: &Path,
-    ) -> Pk2Result<Option<(&PackBlockChain, usize, &PackEntry)>> {
+    ) -> Pk2Result<(&PackBlockChain, usize, &PackEntry)> {
         let mut components = path.components();
 
         if let Some(c) = components.next_back() {
@@ -85,9 +85,9 @@ impl BlockManager {
                 .enumerate()
                 .find(|(_, entry)| entry.name() == name)
                 .ok_or(Error::NotFound)
-                .map(|(idx, entry)| Some((parent, idx, entry)))
+                .map(|(idx, entry)| (parent, idx, entry))
         } else {
-            Ok(None)
+            Err(Error::InvalidPath)
         }
     }
 
