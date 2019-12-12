@@ -1,6 +1,7 @@
 # pk2
 
 [![](https://tokei.rs/b1/github/Veykril/pk2)](https://github.com/Veykril/blend2d-rs)
+[![](https://travis-ci.com/Veykril/pk2.svg?branch=master)](https://travis-ci.com/Veykril/pk2)
 
 A rust crate for reading and writing Silkroad Online's pk2 format
 

@@ -41,5 +41,21 @@ impl From<SystemTime> for FILETIME {
 fn test_convert_roundtrip() {
     let now = SystemTime::now();
     let ftime = FILETIME::from(now);
-    assert_eq!(Some(now), ftime.into_systime());
+    let round_trip = ftime.into_systime().unwrap();
+    // we compare it this way because the conversion loses precision due to the
+    // divison by 100. So comparing it by divising the nanoseconds we will get a
+    // lossless comparison for systems that have a higher timer resolution.
+    assert_eq!(
+        now.duration_since(SystemTime::UNIX_EPOCH)
+            .as_ref()
+            .map(Duration::as_nanos)
+            .map(|nanos| nanos / 100)
+            .unwrap(),
+        round_trip
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .as_ref()
+            .map(Duration::as_nanos)
+            .map(|nanos| nanos / 100)
+            .unwrap()
+    );
 }

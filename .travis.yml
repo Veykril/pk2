@@ -5,16 +5,16 @@ matrix:
       os: linux
       dist: xenial
       rust: stable
-    - name: "Linux: Nightly"
-      os: linux
-      dist: xenial
-      rust: nightly
     - name: "OSX: Stable"
       rust: stable
       os: osx
     - name: "Windows: Stable"
       rust: stable
       os: windows
+    - name: "Linux: Nightly"
+      os: linux
+      dist: xenial
+      rust: nightly
 jobs:
   allow_failures:
     - rust: nightly
