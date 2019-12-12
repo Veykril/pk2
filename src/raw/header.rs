@@ -1,4 +1,3 @@
-use block_modes::BlockMode;
 use byteorder::{LittleEndian as LE, ReadBytesExt, WriteBytesExt};
 
 use std::fmt;
@@ -7,7 +6,7 @@ use std::io::{self, Read, Write};
 use crate::constants;
 use crate::Blowfish;
 
-pub(crate) struct PackHeader {
+pub struct PackHeader {
     pub signature: [u8; 30],
     pub version: u32,
     pub encrypted: bool,
@@ -28,14 +27,18 @@ impl Default for PackHeader {
 }
 
 impl PackHeader {
-    pub(in crate) fn new_encrypted(bf: &mut Blowfish) -> Self {
+    pub fn new_encrypted(bf: &Blowfish) -> Self {
         let mut this = Self::default();
-        let _ = bf.encrypt_nopad(&mut this.verify);
+        let _ = bf.encrypt(&mut this.verify);
         this.encrypted = true;
         this
     }
 
-    pub(in crate) fn from_reader<R: Read>(mut r: R) -> io::Result<Self> {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn from_reader<R: Read>(mut r: R) -> io::Result<Self> {
         let mut signature = [0; 30];
         r.read_exact(&mut signature)?;
         let version = r.read_u32::<LE>()?;
@@ -53,7 +56,7 @@ impl PackHeader {
         })
     }
 
-    pub(in crate) fn to_writer<W: Write>(&self, mut w: W) -> io::Result<()> {
+    pub fn to_writer<W: Write>(&self, mut w: W) -> io::Result<()> {
         w.write_all(&self.signature)?;
         w.write_u32::<LE>(self.version)?;
         w.write_u8(self.encrypted as u8)?;

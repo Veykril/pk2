@@ -2,29 +2,31 @@ use std::collections::HashMap;
 use std::io;
 use std::path::{Component, Path};
 
-use crate::archive::{DirectoryEntry, PackBlockChain, PackEntry};
 use crate::constants::PK2_ROOT_BLOCK;
 use crate::error::{Error, Pk2Result};
-use crate::ArchiveBuffer;
+use crate::raw::block_chain::PackBlockChain;
+use crate::raw::entry::{DirectoryEntry, PackEntry};
+use crate::Blowfish;
 use crate::ChainIndex;
 
-pub(crate) struct BlockManager {
+/// Simple BlockManager backed by a hashmap.
+pub struct BlockManager {
     chains: HashMap<ChainIndex, PackBlockChain, NoHashHasherBuilder>,
 }
 
 impl BlockManager {
     /// Parses the complete index of a pk2 file
-    pub(crate) fn new<B: io::Read + io::Seek>(file: &ArchiveBuffer<B>) -> Pk2Result<Self> {
-        let mut chains = HashMap::default();
+    pub fn new<F: io::Read + io::Seek>(bf: Option<&Blowfish>, mut file: F) -> Pk2Result<Self> {
+        let mut chains = HashMap::with_capacity_and_hasher(32, NoHashHasherBuilder);
         let mut offsets = vec![PK2_ROOT_BLOCK];
         while let Some(offset) = offsets.pop() {
-            let block_chain = Self::read_chain_from_file_at(file, offset)?;
+            let block_chain = Self::read_chain_from_file_at(bf, &mut file, offset)?;
             // put all folder offsets of this chain into the stack to parse them next
             offsets.extend(block_chain.entries().filter_map(|entry| {
                 entry
                     .as_directory()
-                    .filter(|dir| dir.is_normal())
-                    .map(DirectoryEntry::pos_children)
+                    .filter(|dir| dir.is_normal_link())
+                    .map(DirectoryEntry::children_position)
             }));
             chains.insert(offset, block_chain);
         }
@@ -34,13 +36,14 @@ impl BlockManager {
     /// Reads a [`PackBlockChain`] from the given file at the specified offset.
     /// Note: FIXME Can potentially end up in a neverending loop with a
     /// specially crafted file.
-    fn read_chain_from_file_at<B: io::Read + io::Seek>(
-        file: &ArchiveBuffer<B>,
+    fn read_chain_from_file_at<F: io::Read + io::Seek>(
+        bf: Option<&Blowfish>,
+        mut file: F,
         ChainIndex(mut offset): ChainIndex,
     ) -> Pk2Result<PackBlockChain> {
         let mut blocks = Vec::new();
         loop {
-            let block = file.read_block_at(offset)?;
+            let block = crate::io::read_block_at(bf, &mut file, offset)?;
             let nc = block.entries().last().and_then(PackEntry::next_block);
             blocks.push(block);
             match nc {

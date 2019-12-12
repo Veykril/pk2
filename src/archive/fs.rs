@@ -2,7 +2,9 @@
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::time::SystemTime;
 
-use crate::archive::{DirectoryEntry, FileEntry, PackBlockChain, PackEntry, Pk2};
+use crate::archive::Pk2;
+use crate::raw::block_chain::PackBlockChain;
+use crate::raw::entry::{DirectoryEntry, FileEntry, PackEntry};
 use crate::ChainIndex;
 
 pub struct File<'pk2, B = std::fs::File> {
@@ -25,15 +27,15 @@ impl<'pk2, B> File<'pk2, B> {
     }
 
     pub fn modify_time(&self) -> Option<SystemTime> {
-        self.entry().modify_time.into_systime()
+        self.entry().modify_time()
     }
 
     pub fn access_time(&self) -> Option<SystemTime> {
-        self.entry().access_time.into_systime()
+        self.entry().access_time()
     }
 
     pub fn create_time(&self) -> Option<SystemTime> {
-        self.entry().create_time.into_systime()
+        self.entry().create_time()
     }
 
     #[inline]
@@ -379,7 +381,7 @@ impl<'pk2, B> Directory<'pk2, B> {
 
     /// Returns an iterator over all files in this directory.
     pub fn files(&'pk2 self) -> impl Iterator<Item = File<'pk2, B>> {
-        let chain = self.entry().pos_children();
+        let chain = self.entry().children_position();
         self.dir_chain(chain)
             .entries()
             .enumerate()
@@ -391,14 +393,14 @@ impl<'pk2, B> Directory<'pk2, B> {
     /// Returns an iterator over all items in this directory excluding `.` and
     /// `..`.
     pub fn entries(&'pk2 self) -> impl Iterator<Item = DirEntry<'pk2, B>> {
-        let chain = self.entry().pos_children();
+        let chain = self.entry().children_position();
         self.dir_chain(chain)
             .entries()
             .enumerate()
             .flat_map(move |(idx, entry)| match entry {
                 PackEntry::File(_) => Some(DirEntry::File(File::new(self.archive, chain, idx))),
                 PackEntry::Directory(dir) => {
-                    if dir.is_normal() {
+                    if dir.is_normal_link() {
                         Some(DirEntry::Directory(Directory::new(
                             self.archive,
                             chain,

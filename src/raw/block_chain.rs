@@ -1,21 +1,22 @@
 use std::io::{Read, Seek, Write};
 use std::ops;
 
-use crate::archive::entry::PackEntry;
 use crate::constants::*;
 use crate::error::{Error, Pk2Result};
-use crate::ArchiveBuffer;
+use crate::io::{file_len, write_block, write_entry_at};
+use crate::raw::entry::{DirectoryEntry, PackEntry};
+use crate::Blowfish;
 use crate::ChainIndex;
 
 /// A collection of [`PackBlock`]s where each blocks next_block field points to
 /// the following block in the file.
-pub(crate) struct PackBlockChain {
+pub struct PackBlockChain {
     blocks: Vec<PackBlock>,
 }
 
 impl PackBlockChain {
     #[inline]
-    pub(crate) fn from_blocks(blocks: Vec<PackBlock>) -> Self {
+    pub fn from_blocks(blocks: Vec<PackBlock>) -> Self {
         debug_assert!(!blocks.is_empty());
         PackBlockChain { blocks }
     }
@@ -72,25 +73,30 @@ impl PackBlockChain {
         self.entries()
             .find(|entry| entry.name() == Some(directory))
             .ok_or(Error::NotFound)
-            .and_then(|entry| match entry {
-                PackEntry::Directory(dir) => Ok(dir.pos_children()),
-                _ => Err(Error::ExpectedDirectory),
+            .and_then(|entry| {
+                entry
+                    .as_directory()
+                    .map(DirectoryEntry::children_position)
+                    .ok_or(Error::ExpectedDirectory)
             })
     }
 
     /// Creates a new block in the file, appends it to this chain and returns
     /// the entry index of the first entry of the new block relative to the
     /// chain.
-    pub fn create_new_block<B: Write + Seek>(
+    pub(crate) fn create_new_block<F: Write + Seek>(
         &mut self,
-        file: &mut ArchiveBuffer<B>,
+        bf: Option<&Blowfish>,
+        mut file: F,
     ) -> Pk2Result<usize> {
-        let new_block_offset = file.len()?;
+        let new_block_offset = file_len(&mut file)?;
         let block = PackBlock::new(new_block_offset);
-        file.write_block(&block)?;
+        write_block(bf, &mut file, &block)?;
         let last_idx = self.num_entries() - 1;
         self[last_idx].set_next_block(new_block_offset);
-        file.write_entry_at(
+        write_entry_at(
+            bf,
+            &mut file,
             self.file_offset_for_entry(last_idx).unwrap(),
             &self[last_idx],
         )?;
@@ -113,20 +119,26 @@ impl ops::IndexMut<usize> for PackBlockChain {
 }
 
 /// A collection of 20 [`PackEntry`]s.
-pub(crate) struct PackBlock {
-    pub offset: u64,
+pub struct PackBlock {
+    // TODO: move this somewhere else, this should not belong to this struct?
+    offset: u64,
     entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT],
 }
 
 impl PackBlock {
-    pub(crate) fn new(offset: u64) -> Self {
+    pub fn new(offset: u64) -> Self {
         PackBlock {
             offset,
             entries: Default::default(),
         }
     }
 
-    pub(crate) fn from_reader<R: Read>(mut r: R, offset: u64) -> Pk2Result<Self> {
+    #[inline]
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    pub fn from_reader<R: Read>(mut r: R, offset: u64) -> Pk2Result<Self> {
         let mut entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT] = Default::default();
         for entry in &mut entries {
             *entry = PackEntry::from_reader(&mut r)?;
@@ -134,7 +146,7 @@ impl PackBlock {
         Ok(PackBlock { offset, entries })
     }
 
-    pub(crate) fn to_writer<W: Write>(&self, mut w: W) -> Pk2Result<()> {
+    pub fn to_writer<W: Write>(&self, mut w: W) -> Pk2Result<()> {
         for entry in &self.entries {
             entry.to_writer(&mut w)?;
         }
@@ -142,15 +154,15 @@ impl PackBlock {
     }
 
     #[inline]
-    pub(crate) fn entries(&self) -> std::slice::Iter<PackEntry> {
+    pub fn entries(&self) -> std::slice::Iter<PackEntry> {
         self.entries.iter()
     }
 
-    pub(crate) fn get(&self, entry: usize) -> Option<&PackEntry> {
+    pub fn get(&self, entry: usize) -> Option<&PackEntry> {
         self.entries.get(entry)
     }
 
-    pub(crate) fn get_mut(&mut self, entry: usize) -> Option<&mut PackEntry> {
+    pub fn get_mut(&mut self, entry: usize) -> Option<&mut PackEntry> {
         self.entries.get_mut(entry)
     }
 }

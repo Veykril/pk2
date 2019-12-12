@@ -1,7 +1,9 @@
 #![warn(clippy::all)]
 #![allow(clippy::match_bool)]
-mod fs;
-pub use self::fs::*;
+
+pub mod raw;
+
+pub(crate) mod io;
 
 mod error;
 pub use self::error::Error;
@@ -9,21 +11,17 @@ pub use self::error::Error;
 mod archive;
 pub use self::archive::Pk2;
 
-mod buffer;
-pub(crate) use self::buffer::ArchiveBuffer;
-
 mod filetime;
 pub(crate) use self::filetime::FILETIME;
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct ChainIndex(pub u64);
+mod blowfish;
+pub use self::blowfish::Blowfish;
 
-pub(crate) type Blowfish =
-    block_modes::Ecb<blowfish::BlowfishLE, block_modes::block_padding::ZeroPadding>;
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ChainIndex(pub u64);
 
 /// Magic Numbers and definitions
-#[allow(dead_code)]
-pub(crate) mod constants {
+pub mod constants {
     use super::ChainIndex;
     use super::FILETIME;
     use std::mem;
@@ -40,28 +38,27 @@ pub(crate) mod constants {
     pub const PK2_FILE_BLOCK_SIZE: usize =
         mem::size_of::<[RawPackFileEntry; PK2_FILE_BLOCK_ENTRY_COUNT]>();
 
-    pub(crate) const PK2_ROOT_BLOCK: ChainIndex =
-        ChainIndex(mem::size_of::<RawPackHeader>() as u64);
+    pub const PK2_ROOT_BLOCK: ChainIndex = ChainIndex(mem::size_of::<RawPackHeader>() as u64);
 
     #[repr(packed)]
     pub struct RawPackHeader {
-        signature: [u8; 30],
-        version: u32,
-        encrypted: u8,
-        verify: [u8; 16],
-        reserved: [u8; 205],
+        pub signature: [u8; 30],
+        pub version: u32,
+        pub encrypted: u8,
+        pub verify: [u8; 16],
+        pub reserved: [u8; 205],
     }
 
     #[repr(packed)]
     pub struct RawPackFileEntry {
-        ty: u8, //0 = Empty, 1 = Directory, 2  = File
-        name: [u8; 81],
-        access: FILETIME,
-        create: FILETIME,
-        modify: FILETIME,
-        position: u64, // Position of data for files, position of children for directorys
-        size: u32,
-        next_block: u64,
-        _padding: [u8; 2],
+        pub ty: u8, //0 = Empty, 1 = Directory, 2  = File
+        pub name: [u8; 81],
+        pub access: FILETIME,
+        pub create: FILETIME,
+        pub modify: FILETIME,
+        pub position: u64, // Position of data for files, position of children for directorys
+        pub size: u32,
+        pub next_block: u64,
+        pub _padding: [u8; 2],
     }
 }

@@ -1,26 +1,23 @@
-use block_modes::BlockMode;
-
 use std::path::{Component, Path};
-use std::{fs, io};
+use std::{fs as stdfs, io};
 
 use crate::constants::*;
 use crate::error::{Error, Pk2Result};
-use crate::fs::{Directory, File, FileMut};
-use crate::ArchiveBuffer;
 use crate::Blowfish;
 use crate::ChainIndex;
 
-mod block_chain;
-mod block_manager;
-mod entry;
-mod header;
+pub mod fs;
+use self::fs::{Directory, File, FileMut};
 
-pub(crate) use self::block_chain::{PackBlock, PackBlockChain};
-pub(crate) use self::block_manager::BlockManager;
-pub(crate) use self::entry::*;
-pub(crate) use self::header::PackHeader;
+mod buffer;
+use self::buffer::ArchiveBuffer;
 
-pub struct Pk2<B = fs::File> {
+pub(crate) use crate::raw::block_chain::{PackBlock, PackBlockChain};
+pub(crate) use crate::raw::block_manager::BlockManager;
+pub(crate) use crate::raw::entry::*;
+pub(crate) use crate::raw::header::PackHeader;
+
+pub struct Pk2<B = stdfs::File> {
     pub(crate) file: ArchiveBuffer<B>,
     // we'll make sure to uphold runtime borrow rules, this is needed to allow borrowing file names
     // and such. This will be fine given that blocks can only move in memory through mutating
@@ -29,9 +26,9 @@ pub struct Pk2<B = fs::File> {
     pub(crate) block_manager: BlockManager,
 }
 
-impl Pk2<fs::File> {
+impl Pk2<stdfs::File> {
     pub fn create_new<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Pk2Result<Self> {
-        let file = fs::OpenOptions::new()
+        let file = stdfs::OpenOptions::new()
             .create_new(true)
             .write(true)
             .read(true)
@@ -40,7 +37,10 @@ impl Pk2<fs::File> {
     }
 
     pub fn open<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Pk2Result<Self> {
-        let file = fs::OpenOptions::new().write(true).read(true).open(path)?;
+        let file = stdfs::OpenOptions::new()
+            .write(true)
+            .read(true)
+            .open(path)?;
         Self::_open_in_impl(file, key)
     }
 }
@@ -64,9 +64,9 @@ where
         }
 
         let bf = if header.encrypted {
-            let mut bf = create_blowfish(key.as_ref())?;
+            let bf = create_blowfish(key.as_ref())?;
             let mut checksum = *PK2_CHECKSUM;
-            let _ = bf.encrypt_nopad(&mut checksum);
+            let _ = bf.encrypt(&mut checksum);
             if checksum[..PK2_CHECKSUM_STORED] != header.verify[..PK2_CHECKSUM_STORED] {
                 return Err(Error::InvalidKey);
             } else {
@@ -75,8 +75,9 @@ where
         } else {
             None
         };
+        let block_manager = BlockManager::new(bf.as_ref(), &mut file)?;
         let file = ArchiveBuffer::new(file, bf);
-        let block_manager = BlockManager::new(&file)?;
+
         Ok(Pk2 {
             file,
             block_manager,
@@ -97,9 +98,9 @@ where
         let (header, mut file) = if key.as_ref().is_empty() {
             (PackHeader::default(), ArchiveBuffer::new(file, None))
         } else {
-            let mut bf = create_blowfish(key.as_ref())?;
+            let bf = create_blowfish(key.as_ref())?;
             (
-                PackHeader::new_encrypted(&mut bf),
+                PackHeader::new_encrypted(&bf),
                 ArchiveBuffer::new(file, Some(bf)),
             )
         };
@@ -109,7 +110,7 @@ where
         block[0] = PackEntry::new_directory(".".to_owned(), PK2_ROOT_BLOCK, None);
         file.write_block(&block)?;
 
-        let block_manager = BlockManager::new(&file)?;
+        let block_manager = BlockManager::new(file.bf(), &mut *file.file())?;
         Ok(Pk2 {
             file,
             block_manager,
@@ -256,7 +257,7 @@ where
                         idx
                     } else {
                         // current chain is full so create a new block and append it
-                        current_chain.create_new_block(&mut self.file)?
+                        current_chain.create_new_block(self.file.bf(), &mut *self.file.file())?
                     };
                     // Are we done after this? if not, create a new blockchain since this is a new
                     // directory
@@ -285,8 +286,8 @@ where
                         .ok_or(Error::InvalidChainIndex)?
                         .entries()
                         .flat_map(PackEntry::as_directory)
-                        .find(|dir| dir.is_parent())
-                        .map(DirectoryEntry::pos_children)
+                        .find(|dir| dir.is_parent_link())
+                        .map(DirectoryEntry::children_position)
                         .ok_or(Error::InvalidPath)?;
                 }
                 _ => unreachable!(),
@@ -319,7 +320,7 @@ where
 fn create_blowfish(key: &[u8]) -> Pk2Result<Blowfish> {
     let mut key = key.to_vec();
     gen_final_blowfish_key_inplace(&mut key);
-    Blowfish::new_varkey(&key).map_err(|_| Error::InvalidKey)
+    Blowfish::new_varkey(&key)
 }
 
 fn gen_final_blowfish_key_inplace(key: &mut [u8]) {

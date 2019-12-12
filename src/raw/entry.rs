@@ -3,6 +3,7 @@ use encoding_rs::EUC_KR;
 
 use std::io::{self, Read, Write};
 use std::num::NonZeroU64;
+use std::time::SystemTime;
 
 use crate::constants::PK2_FILE_ENTRY_SIZE;
 use crate::error::{Error, Pk2Result};
@@ -45,28 +46,45 @@ impl DirectoryEntry {
     }
 
     #[inline]
-    pub(crate) fn pos_children(&self) -> ChainIndex {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn access_time(&self) -> Option<SystemTime> {
+        self.access_time.into_systime()
+    }
+
+    pub fn create_time(&self) -> Option<SystemTime> {
+        self.create_time.into_systime()
+    }
+
+    pub fn modify_time(&self) -> Option<SystemTime> {
+        self.modify_time.into_systime()
+    }
+
+    #[inline]
+    pub fn children_position(&self) -> ChainIndex {
         self.pos_children
     }
 
     #[inline]
-    pub(crate) fn name(&self) -> &str {
-        &self.name
+    pub fn next_block(&self) -> Option<NonZeroU64> {
+        self.next_block
     }
 
     #[inline]
-    pub(crate) fn is_current(&self) -> bool {
+    pub fn is_current_link(&self) -> bool {
         self.name == "."
     }
 
     #[inline]
-    pub(crate) fn is_parent(&self) -> bool {
+    pub fn is_parent_link(&self) -> bool {
         self.name == ".."
     }
 
     #[inline]
-    pub(crate) fn is_normal(&self) -> bool {
-        !(self.is_current() || self.is_parent())
+    pub fn is_normal_link(&self) -> bool {
+        !(self.is_current_link() || self.is_parent_link())
     }
 }
 
@@ -101,24 +119,41 @@ impl FileEntry {
     }
 
     #[inline]
-    pub(crate) fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         &self.name
     }
 
+    pub fn access_time(&self) -> Option<SystemTime> {
+        self.access_time.into_systime()
+    }
+
+    pub fn create_time(&self) -> Option<SystemTime> {
+        self.create_time.into_systime()
+    }
+
+    pub fn modify_time(&self) -> Option<SystemTime> {
+        self.modify_time.into_systime()
+    }
+
     #[inline]
-    pub(crate) fn pos_data(&self) -> u64 {
+    pub fn pos_data(&self) -> u64 {
         self.pos_data
     }
 
     #[inline]
-    pub(crate) fn size(&self) -> u32 {
+    pub fn size(&self) -> u32 {
         self.size
+    }
+
+    #[inline]
+    pub fn next_block(&self) -> Option<NonZeroU64> {
+        self.next_block
     }
 }
 
 /// An entry of a [`PackBlock`].
 #[derive(Clone, Eq, PartialEq)]
-pub(crate) enum PackEntry {
+pub enum PackEntry {
     Empty(EmptyEntry),
     Directory(DirectoryEntry),
     File(FileEntry),
@@ -131,7 +166,7 @@ impl Default for PackEntry {
 }
 
 impl PackEntry {
-    pub(crate) fn new_directory(
+    pub fn new_directory(
         name: String,
         pos_children: ChainIndex,
         next_block: Option<NonZeroU64>,
@@ -139,7 +174,7 @@ impl PackEntry {
         PackEntry::Directory(DirectoryEntry::new(name, pos_children, next_block))
     }
 
-    pub(crate) fn new_file(
+    pub fn new_file(
         name: String,
         pos_data: u64,
         size: u32,
@@ -148,12 +183,12 @@ impl PackEntry {
         PackEntry::File(FileEntry::new(name, pos_data, size, next_block))
     }
 
-    pub(crate) fn new_empty(next_block: Option<NonZeroU64>) -> Self {
+    pub fn new_empty(next_block: Option<NonZeroU64>) -> Self {
         PackEntry::Empty(EmptyEntry::new(next_block))
     }
 
     #[inline]
-    pub(crate) fn as_directory(&self) -> Option<&DirectoryEntry> {
+    pub fn as_directory(&self) -> Option<&DirectoryEntry> {
         match self {
             PackEntry::Directory(entry) => Some(entry),
             _ => None,
@@ -161,7 +196,7 @@ impl PackEntry {
     }
 
     #[inline]
-    pub(crate) fn as_file(&self) -> Option<&FileEntry> {
+    pub fn as_file(&self) -> Option<&FileEntry> {
         match self {
             PackEntry::File(entry) => Some(entry),
             _ => None,
@@ -169,14 +204,14 @@ impl PackEntry {
     }
 
     #[inline]
-    pub(crate) fn as_file_mut(&mut self) -> Option<&mut FileEntry> {
+    pub fn as_file_mut(&mut self) -> Option<&mut FileEntry> {
         match self {
             PackEntry::File(entry) => Some(entry),
             _ => None,
         }
     }
 
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         let next_block = match *self {
             PackEntry::Empty(EmptyEntry { next_block })
             | PackEntry::Directory(DirectoryEntry { next_block, .. })
@@ -185,7 +220,7 @@ impl PackEntry {
         *self = PackEntry::new_empty(next_block);
     }
 
-    pub(crate) fn next_block(&self) -> Option<NonZeroU64> {
+    pub fn next_block(&self) -> Option<NonZeroU64> {
         match *self {
             PackEntry::Empty(EmptyEntry { next_block })
             | PackEntry::Directory(DirectoryEntry { next_block, .. })
@@ -193,7 +228,7 @@ impl PackEntry {
         }
     }
 
-    pub(crate) fn set_next_block(&mut self, nc: u64) {
+    pub fn set_next_block(&mut self, nc: u64) {
         match self {
             PackEntry::Empty(EmptyEntry { next_block, .. })
             | PackEntry::Directory(DirectoryEntry { next_block, .. })
@@ -201,7 +236,7 @@ impl PackEntry {
         }
     }
 
-    pub(crate) fn name(&self) -> Option<&str> {
+    pub fn name(&self) -> Option<&str> {
         match self {
             PackEntry::Empty(_) => None,
             PackEntry::Directory(DirectoryEntry { name, .. })
@@ -210,7 +245,7 @@ impl PackEntry {
     }
 
     #[inline]
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         match self {
             PackEntry::Empty(_) => true,
             _ => false,
@@ -218,7 +253,7 @@ impl PackEntry {
     }
 
     #[inline]
-    pub(crate) fn is_file(&self) -> bool {
+    pub fn is_file(&self) -> bool {
         match self {
             PackEntry::File(_) => true,
             _ => false,
@@ -226,7 +261,7 @@ impl PackEntry {
     }
 
     #[inline]
-    pub(crate) fn is_dir(&self) -> bool {
+    pub fn is_dir(&self) -> bool {
         match self {
             PackEntry::Directory(_) => true,
             _ => false,
@@ -234,13 +269,22 @@ impl PackEntry {
     }
 }
 
+use std::mem;
 impl PackEntry {
-    // Will always seek to the end of the entry
-    pub(crate) fn from_reader<R: Read>(mut r: R) -> Pk2Result<Self> {
+    /// Reads an entry from the given Read instance always reading exactly
+    /// PK2_FILE_ENTRY_SIZE bytes.
+    pub fn from_reader<R: Read>(mut r: R) -> Pk2Result<Self> {
         match r.read_u8()? {
             0 => {
-                r.read_exact(&mut [0; PK2_FILE_ENTRY_SIZE - 1])?; //seek to end of entry
-                Ok(PackEntry::new_empty(None))
+                r.read_exact(
+                    &mut [0; PK2_FILE_ENTRY_SIZE
+                        - mem::size_of::<u64>()
+                        - mem::size_of::<u16>()
+                        - mem::size_of::<u8>()],
+                )?;
+                let next_block = NonZeroU64::new(r.read_u64::<LE>()?);
+                r.read_u16::<LE>()?;
+                Ok(PackEntry::new_empty(next_block))
             }
             ty @ 1 | ty @ 2 => {
                 let name = {
@@ -297,12 +341,15 @@ impl PackEntry {
         }
     }
 
-    pub(crate) fn to_writer<W: Write>(&self, mut w: W) -> io::Result<()> {
+    pub fn to_writer<W: Write>(&self, mut w: W) -> io::Result<()> {
         match self {
             PackEntry::Empty(EmptyEntry { next_block }) => {
-                w.write_all(&[0; PK2_FILE_ENTRY_SIZE - 8])?;
-                w.write_u64::<LE>(next_block.map_or(0, NonZeroU64::get))
-                    .map_err(Into::into)
+                w.write_all(
+                    &[0; PK2_FILE_ENTRY_SIZE - mem::size_of::<u64>() - mem::size_of::<u16>()],
+                )?;
+                w.write_u64::<LE>(next_block.map_or(0, NonZeroU64::get))?;
+                w.write_u16::<LE>(0)?;
+                Ok(())
             }
             PackEntry::Directory(DirectoryEntry {
                 name,

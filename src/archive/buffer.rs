@@ -1,7 +1,5 @@
-use block_modes::BlockMode;
-
-use std::cell::{RefCell, UnsafeCell};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::cell::RefCell;
+use std::io::{self, Seek, SeekFrom, Write};
 
 use crate::archive::{PackBlock, PackEntry};
 use crate::constants::{PK2_FILE_BLOCK_SIZE, PK2_FILE_ENTRY_SIZE};
@@ -12,14 +10,14 @@ pub(crate) struct ArchiveBuffer<B> {
     file: RefCell<B>,
     // UnsafeCell is being used here due to the blowfish lib requiring mutability, we don't lend
     // out borrows for more than a function call though so this is fine
-    bf: Option<UnsafeCell<Blowfish>>,
+    bf: Option<Blowfish>,
 }
 
 impl<B> ArchiveBuffer<B> {
     pub(crate) fn new(file: B, bf: Option<Blowfish>) -> Self {
         ArchiveBuffer {
             file: RefCell::new(file),
-            bf: bf.map(UnsafeCell::new),
+            bf,
         }
     }
 
@@ -27,20 +25,13 @@ impl<B> ArchiveBuffer<B> {
         self.file.borrow_mut()
     }
 
-    #[inline]
-    fn encrypt(&self, buf: &mut [u8]) {
-        let _ = self
-            .bf
-            .as_ref()
-            .map(|bf| unsafe { &mut *bf.get() }.encrypt_nopad(buf));
+    pub(crate) fn bf(&self) -> Option<&Blowfish> {
+        self.bf.as_ref()
     }
 
     #[inline]
-    fn decrypt(&self, buf: &mut [u8]) {
-        let _ = self
-            .bf
-            .as_ref()
-            .map(|bf| unsafe { &mut *bf.get() }.decrypt_nopad(buf));
+    fn encrypt(&self, buf: &mut [u8]) {
+        let _ = self.bf.as_ref().map(|bf| bf.encrypt(buf));
     }
 }
 
@@ -50,17 +41,6 @@ impl<B: Seek> ArchiveBuffer<B> {
             .borrow_mut()
             .seek(SeekFrom::End(0))
             .map_err(Into::into)
-    }
-}
-
-impl<B: Read + Seek> ArchiveBuffer<B> {
-    pub(crate) fn read_block_at(&self, offset: u64) -> Pk2Result<PackBlock> {
-        let mut buf = [0; PK2_FILE_BLOCK_SIZE];
-        let mut file = self.file.borrow_mut();
-        file.seek(SeekFrom::Start(offset))?;
-        file.read_exact(&mut buf)?;
-        self.decrypt(&mut buf);
-        PackBlock::from_reader(&buf[..], offset)
     }
 }
 
@@ -98,7 +78,7 @@ where
         block.to_writer(&mut buf[..])?;
         self.encrypt(&mut buf);
         let mut file = self.file.borrow_mut();
-        file.seek(SeekFrom::Start(block.offset))?;
+        file.seek(SeekFrom::Start(block.offset()))?;
         file.write_all(&buf)?;
         Ok(())
     }
