@@ -1,0 +1,25 @@
+language: rust
+matrix:
+  include:
+    - name: "Linux: Stable"
+      os: linux
+      dist: xenial
+      rust: stable
+    - name: "Linux: Nightly"
+      os: linux
+      dist: xenial
+      rust: nightly
+    - name: "OSX: Stable"
+      rust: stable
+      os: osx
+    - name: "Windows: Stable"
+      rust: stable
+      os: windows
+jobs:
+  allow_failures:
+    - rust: nightly
+  fast_finish: true
+cache: cargo
+branches:
+  only:
+    - master
