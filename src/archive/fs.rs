@@ -84,7 +84,7 @@ where
         let pos_data = self.entry().pos_data();
         let size = self.entry().size();
         let n = {
-            let mut file = self.archive.file.file();
+            let mut file = self.archive.file.borrow_mut();
             file.seek(SeekFrom::Start(pos_data + self.seek_pos as u64))?;
             let len = buf.len().min((size as u64 - self.seek_pos) as usize);
             file.read(&mut buf[..len])?
@@ -185,7 +185,7 @@ where
         let pos_data = self.entry().pos_data();
         let size = self.entry().size();
         self.data.resize(size as usize, 0);
-        let mut file = self.archive.file.file();
+        let mut file = self.archive.file.borrow_mut();
         file.seek(SeekFrom::Start(pos_data as u64))?;
         file.read_exact(&mut self.data)?;
         Ok(())
@@ -295,13 +295,18 @@ where
             };
             // new unwritten file/more data than what fits, so use a new block
             if self.data.len() > *file_data_size as usize {
-                *file_data_pos = self.archive.file.write_new_data_buffer(&self.data)?;
+                *file_data_pos = crate::io::write_new_data_buffer(
+                    &mut *self.archive.file.borrow_mut(),
+                    &self.data,
+                )?;
                 *file_data_size = self.data.len() as u32;
             // we got data to write that is not bigger than the block we have
             } else {
-                self.archive
-                    .file
-                    .write_data_buffer_at(*file_data_pos, &self.data)?;
+                crate::io::write_data_buffer_at(
+                    &mut *self.archive.file.borrow_mut(),
+                    *file_data_pos,
+                    &self.data,
+                )?;
                 *file_data_size = self.data.len() as u32;
             }
             // update entry
@@ -311,7 +316,9 @@ where
                 .and_then(|chain| chain.file_offset_for_entry(self.entry_index))
                 .unwrap();
             self.set_modify_time(SystemTime::now());
-            self.archive.file.write_entry_at(
+            crate::io::write_entry_at(
+                self.archive.blowfish.as_ref(),
+                &mut *self.archive.file.borrow_mut(),
                 entry_offset,
                 self.archive
                     .get_entry(self.chain, self.entry_index)

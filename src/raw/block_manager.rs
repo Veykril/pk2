@@ -28,6 +28,7 @@ impl BlockManager {
                     .filter(|dir| dir.is_normal_link())
                     .map(DirectoryEntry::children_position)
             }));
+            // TODO collisions
             chains.insert(offset, block_chain);
         }
         Ok(BlockManager { chains })
@@ -54,24 +55,24 @@ impl BlockManager {
     }
 
     #[inline]
-    pub(crate) fn get(&self, chain: ChainIndex) -> Option<&PackBlockChain> {
+    pub fn get(&self, chain: ChainIndex) -> Option<&PackBlockChain> {
         self.chains.get(&chain)
     }
 
     #[inline]
-    pub(crate) fn get_mut(&mut self, chain: ChainIndex) -> Option<&mut PackBlockChain> {
+    pub fn get_mut(&mut self, chain: ChainIndex) -> Option<&mut PackBlockChain> {
         self.chains.get_mut(&chain)
     }
 
     #[inline]
-    pub(crate) fn insert(&mut self, chain: ChainIndex, block: PackBlockChain) {
+    pub fn insert(&mut self, chain: ChainIndex, block: PackBlockChain) {
         self.chains.insert(chain, block);
     }
 
     /// Resolves a path from the specified chain to a parent chain and the entry
     /// Returns Ok(None) if the path is empty, otherwise (blockchain,
     /// entry_index, entry)
-    pub(crate) fn resolve_path_to_entry_and_parent(
+    pub fn resolve_path_to_entry_and_parent(
         &self,
         current_chain: ChainIndex,
         path: &Path,
@@ -96,7 +97,7 @@ impl BlockManager {
 
     /// Resolves a path to a [`PackBlockChain`] index starting from the given
     /// blockchain returning the index of the last blockchain.
-    pub(crate) fn resolve_path_to_block_chain_index_at(
+    pub fn resolve_path_to_block_chain_index_at(
         &self,
         current_chain: ChainIndex,
         path: &Path,
@@ -116,7 +117,7 @@ impl BlockManager {
     /// Traverses the path until it hits a non-existent component and returns
     /// the rest of the path as a peekable as well as the chain index of the
     /// last valid part.
-    pub(crate) fn validate_dir_path_until<'p>(
+    pub fn validate_dir_path_until<'p>(
         &self,
         mut chain: ChainIndex,
         path: &'p Path,

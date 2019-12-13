@@ -48,3 +48,20 @@ pub fn write_entry_at<F: io::Seek + io::Write>(
     file.write_all(&buf)?;
     Ok(())
 }
+
+/// Write data to the end of the file returning the offset of the written
+/// data in the file.
+pub fn write_new_data_buffer<F: io::Seek + io::Write>(mut file: F, data: &[u8]) -> io::Result<u64> {
+    let file_end = file.seek(io::SeekFrom::End(0))?;
+    file.write_all(data)?;
+    Ok(file_end)
+}
+
+pub fn write_data_buffer_at<F: io::Seek + io::Write>(
+    mut file: F,
+    offset: u64,
+    data: &[u8],
+) -> io::Result<()> {
+    file.seek(io::SeekFrom::Start(offset))?;
+    file.write_all(data)
+}

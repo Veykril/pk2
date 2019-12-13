@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::path::{Component, Path};
 use std::{fs as stdfs, io};
 
@@ -9,21 +10,20 @@ use crate::ChainIndex;
 pub mod fs;
 use self::fs::{Directory, File, FileMut};
 
-mod buffer;
-use self::buffer::ArchiveBuffer;
-
-pub(crate) use crate::raw::block_chain::{PackBlock, PackBlockChain};
-pub(crate) use crate::raw::block_manager::BlockManager;
-pub(crate) use crate::raw::entry::*;
-pub(crate) use crate::raw::header::PackHeader;
+use crate::raw::block_chain::{PackBlock, PackBlockChain};
+use crate::raw::block_manager::BlockManager;
+use crate::raw::entry::*;
+use crate::raw::header::PackHeader;
 
 pub struct Pk2<B = stdfs::File> {
-    pub(crate) file: ArchiveBuffer<B>,
+    // module public due to borrow checker
+    file: RefCell<B>,
+    blowfish: Option<Blowfish>,
     // we'll make sure to uphold runtime borrow rules, this is needed to allow borrowing file names
     // and such. This will be fine given that blocks can only move in memory through mutating
     // operations on themselves which cannot work if their name or anything similar is
     // borrowed.
-    pub(crate) block_manager: BlockManager,
+    block_manager: BlockManager,
 }
 
 impl Pk2<stdfs::File> {
@@ -63,7 +63,7 @@ where
             return Err(Error::UnsupportedVersion);
         }
 
-        let bf = if header.encrypted {
+        let blowfish = if header.encrypted {
             let bf = create_blowfish(key.as_ref())?;
             let mut checksum = *PK2_CHECKSUM;
             let _ = bf.encrypt(&mut checksum);
@@ -75,11 +75,11 @@ where
         } else {
             None
         };
-        let block_manager = BlockManager::new(bf.as_ref(), &mut file)?;
-        let file = ArchiveBuffer::new(file, bf);
+        let block_manager = BlockManager::new(blowfish.as_ref(), &mut file)?;
 
         Ok(Pk2 {
-            file,
+            file: RefCell::new(file),
+            blowfish,
             block_manager,
         })
     }
@@ -95,24 +95,22 @@ where
     }
 
     fn _create_impl<K: AsRef<[u8]>>(file: B, key: K) -> Pk2Result<Self> {
-        let (header, mut file) = if key.as_ref().is_empty() {
-            (PackHeader::default(), ArchiveBuffer::new(file, None))
+        let (header, mut file, blowfish) = if key.as_ref().is_empty() {
+            (PackHeader::default(), file, None)
         } else {
             let bf = create_blowfish(key.as_ref())?;
-            (
-                PackHeader::new_encrypted(&bf),
-                ArchiveBuffer::new(file, Some(bf)),
-            )
+            (PackHeader::new_encrypted(&bf), file, Some(bf))
         };
 
         header.to_writer(&mut file)?;
         let mut block = PackBlock::new(PK2_ROOT_BLOCK.0);
         block[0] = PackEntry::new_directory(".".to_owned(), PK2_ROOT_BLOCK, None);
-        file.write_block(&block)?;
+        crate::io::write_block(blowfish.as_ref(), &mut file, &block)?;
 
-        let block_manager = BlockManager::new(file.bf(), &mut *file.file())?;
+        let block_manager = BlockManager::new(blowfish.as_ref(), &mut file)?;
         Ok(Pk2 {
-            file,
+            file: RefCell::new(file),
+            blowfish,
             block_manager,
         })
     }
@@ -215,8 +213,13 @@ where
         let file_offset = chain.file_offset_for_entry(entry_idx).unwrap();
         self.get_entry_mut(chain_index, entry_idx)
             .map(PackEntry::clear);
-        self.file
-            .write_entry_at(file_offset, &PackEntry::new_empty(next_block))?;
+
+        crate::io::write_entry_at(
+            self.blowfish.as_ref(),
+            &mut *self.file.borrow_mut(),
+            file_offset,
+            &PackEntry::new_empty(next_block),
+        )?;
         Ok(())
     }
 
@@ -257,7 +260,10 @@ where
                         idx
                     } else {
                         // current chain is full so create a new block and append it
-                        current_chain.create_new_block(self.file.bf(), &mut *self.file.file())?
+                        current_chain.create_new_block(
+                            self.blowfish.as_ref(),
+                            &mut *self.file.borrow_mut(),
+                        )?
                     };
                     // Are we done after this? if not, create a new blockchain since this is a new
                     // directory
@@ -267,7 +273,8 @@ where
                             .map(ToOwned::to_owned)
                             .ok_or(Error::NonUnicodePath)?;
                         let (new_chain_offset, block_chain) = Self::create_new_block_chain(
-                            &mut self.file,
+                            &mut *self.file.borrow_mut(),
+                            self.blowfish.as_ref(),
                             current_chain,
                             dir_name,
                             chain_entry_idx,
@@ -297,12 +304,13 @@ where
     }
 
     fn create_new_block_chain(
-        file: &mut ArchiveBuffer<B>,
+        mut file: &mut B,
+        blowfish: Option<&Blowfish>,
         current_chain: &mut PackBlockChain,
         dir_name: String,
         chain_entry_idx: usize,
     ) -> Pk2Result<(ChainIndex, PackBlockChain)> {
-        let new_chain_offset = file.len().map(ChainIndex)?;
+        let new_chain_offset = crate::io::file_len(&mut file).map(ChainIndex)?;
         let entry = &mut current_chain[chain_entry_idx];
         *entry = PackEntry::new_directory(dir_name, new_chain_offset, entry.next_block());
         let offset = current_chain
@@ -311,8 +319,8 @@ where
         let mut block = PackBlock::new(new_chain_offset.0);
         block[0] = PackEntry::new_directory(".".to_string(), new_chain_offset, None);
         block[1] = PackEntry::new_directory("..".to_string(), current_chain.chain_index(), None);
-        file.write_block(&block)?;
-        file.write_entry_at(offset, &current_chain[chain_entry_idx])?;
+        crate::io::write_block(blowfish, &mut file, &block)?;
+        crate::io::write_entry_at(blowfish, file, offset, &current_chain[chain_entry_idx])?;
         Ok((new_chain_offset, PackBlockChain::from_blocks(vec![block])))
     }
 }

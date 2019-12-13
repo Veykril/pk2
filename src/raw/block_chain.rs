@@ -43,24 +43,24 @@ impl PackBlockChain {
     }
 
     /// Returns the number of PackEntries in this chain.
-    pub(crate) fn num_entries(&self) -> usize {
+    pub fn num_entries(&self) -> usize {
         self.blocks.len() * PK2_FILE_BLOCK_ENTRY_COUNT
     }
 
     /// An iterator over the entries of this chain.
-    pub(crate) fn entries(&self) -> impl Iterator<Item = &PackEntry> {
+    pub fn entries(&self) -> impl Iterator<Item = &PackEntry> {
         self.blocks.iter().flat_map(|block| &block.entries)
     }
 
     /// Get the PackEntry at the specified offset.
-    pub(crate) fn get(&self, entry: usize) -> Option<&PackEntry> {
+    pub fn get(&self, entry: usize) -> Option<&PackEntry> {
         self.blocks
             .get(entry / PK2_FILE_BLOCK_ENTRY_COUNT)
             .and_then(|block| block.get(entry % PK2_FILE_BLOCK_ENTRY_COUNT))
     }
 
     /// Get the PackEntry at the specified offset.
-    pub(crate) fn get_mut(&mut self, entry: usize) -> Option<&mut PackEntry> {
+    pub fn get_mut(&mut self, entry: usize) -> Option<&mut PackEntry> {
         self.blocks
             .get_mut(entry / PK2_FILE_BLOCK_ENTRY_COUNT)
             .and_then(|block| block.get_mut(entry % PK2_FILE_BLOCK_ENTRY_COUNT))
@@ -69,7 +69,7 @@ impl PackBlockChain {
     /// Looks up the `directory` name in this [`PackBlockChain`], returning the
     /// offset of the ['PackBlockChain'] corresponding to the directory if
     /// successful.
-    pub(crate) fn find_block_chain_index_of(&self, directory: &str) -> Pk2Result<ChainIndex> {
+    pub fn find_block_chain_index_of(&self, directory: &str) -> Pk2Result<ChainIndex> {
         self.entries()
             .find(|entry| entry.name() == Some(directory))
             .ok_or(Error::NotFound)
