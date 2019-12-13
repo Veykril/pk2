@@ -3,7 +3,8 @@ use byteorder::{LittleEndian as LE, ReadBytesExt, WriteBytesExt};
 use std::fmt;
 use std::io::{self, Read, Write};
 
-use crate::constants;
+use crate::constants::*;
+use crate::error::{Error, Pk2Result};
 use crate::Blowfish;
 
 pub struct PackHeader {
@@ -17,10 +18,10 @@ pub struct PackHeader {
 impl Default for PackHeader {
     fn default() -> Self {
         PackHeader {
-            signature: *constants::PK2_SIGNATURE,
-            version: constants::PK2_VERSION,
+            signature: *PK2_SIGNATURE,
+            version: PK2_VERSION,
             encrypted: false,
-            verify: *constants::PK2_CHECKSUM,
+            verify: *PK2_CHECKSUM,
             reserved: [0; 205],
         }
     }
@@ -36,6 +37,28 @@ impl PackHeader {
 
     pub fn new() -> Self {
         Default::default()
+    }
+
+    /// Validate the signature of this header. Returns an error if the version
+    /// or signature does not match.
+    pub fn validate_sig(&self) -> Pk2Result<()> {
+        if &self.signature != PK2_SIGNATURE {
+            Err(Error::CorruptedFile)
+        } else if self.version != PK2_VERSION {
+            Err(Error::UnsupportedVersion)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Verifies the calculated checksum against this header returning an error
+    /// if it doesn't match.
+    pub fn verify(&self, checksum: [u8; 16]) -> Pk2Result<()> {
+        if checksum[..PK2_CHECKSUM_STORED] != self.verify[..PK2_CHECKSUM_STORED] {
+            Err(Error::InvalidKey)
+        } else {
+            Ok(())
+        }
     }
 
     pub fn from_reader<R: Read>(mut r: R) -> io::Result<Self> {

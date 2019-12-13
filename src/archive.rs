@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::path::{Component, Path};
 use std::{fs as stdfs, io};
 
-use crate::constants::*;
+use crate::constants::{PK2_CHECKSUM, PK2_ROOT_BLOCK, PK2_SALT};
 use crate::error::{Error, Pk2Result};
 use crate::Blowfish;
 use crate::ChainIndex;
@@ -19,10 +19,6 @@ pub struct Pk2<B = stdfs::File> {
     // module public due to borrow checker
     file: RefCell<B>,
     blowfish: Option<Blowfish>,
-    // we'll make sure to uphold runtime borrow rules, this is needed to allow borrowing file names
-    // and such. This will be fine given that blocks can only move in memory through mutating
-    // operations on themselves which cannot work if their name or anything similar is
-    // borrowed.
     block_manager: BlockManager,
 }
 
@@ -56,22 +52,13 @@ where
 
     pub fn _open_in_impl<K: AsRef<[u8]>>(mut file: B, key: K) -> Pk2Result<Self> {
         let header = PackHeader::from_reader(&mut file)?;
-        if &header.signature != PK2_SIGNATURE {
-            return Err(Error::CorruptedFile);
-        }
-        if header.version != PK2_VERSION {
-            return Err(Error::UnsupportedVersion);
-        }
-
+        header.validate_sig()?;
         let blowfish = if header.encrypted {
             let bf = create_blowfish(key.as_ref())?;
             let mut checksum = *PK2_CHECKSUM;
             let _ = bf.encrypt(&mut checksum);
-            if checksum[..PK2_CHECKSUM_STORED] != header.verify[..PK2_CHECKSUM_STORED] {
-                return Err(Error::InvalidKey);
-            } else {
-                Some(bf)
-            }
+            header.verify(checksum)?;
+            Some(bf)
         } else {
             None
         };
