@@ -66,3 +66,8 @@ pub fn write_data_buffer_at<F: io::Seek + io::Write>(
     file.seek(io::SeekFrom::Start(offset))?;
     file.write_all(data)
 }
+
+pub trait RawIo: Sized {
+    fn from_reader<R: io::Read>(r: R) -> Pk2Result<Self>;
+    fn to_writer<W: io::Write>(&self, w: W) -> io::Result<()>;
+}

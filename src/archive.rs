@@ -4,6 +4,7 @@ use std::{fs as stdfs, io};
 
 use crate::constants::{PK2_CHECKSUM, PK2_ROOT_BLOCK, PK2_SALT};
 use crate::error::{Error, Pk2Result};
+use crate::io::RawIo;
 use crate::Blowfish;
 
 pub mod fs;

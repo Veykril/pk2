@@ -46,7 +46,7 @@ impl BlockManager {
         loop {
             let block = crate::io::read_block_at(bf, &mut file, offset)?;
             let nc = block.entries().last().and_then(PackEntry::next_block);
-            blocks.push(block);
+            blocks.push((offset, block));
             match nc {
                 Some(nc) => offset = nc.get(),
                 None => break Ok(PackBlockChain::from_blocks(blocks)),

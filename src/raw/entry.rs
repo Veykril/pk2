@@ -1,13 +1,14 @@
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 use encoding_rs::EUC_KR;
 
-use std::io::{self, Read, Write};
+use std::io::{Read, Result as IoResult, Write};
 use std::num::NonZeroU64;
 use std::time::SystemTime;
 
 use super::ChainIndex;
 use crate::constants::PK2_FILE_ENTRY_SIZE;
 use crate::error::{Error, Pk2Result};
+use crate::io::RawIo;
 use crate::FILETIME;
 
 #[derive(Clone, Eq, PartialEq)]
@@ -270,10 +271,10 @@ impl PackEntry {
 }
 
 use std::mem;
-impl PackEntry {
+impl RawIo for PackEntry {
     /// Reads an entry from the given Read instance always reading exactly
     /// PK2_FILE_ENTRY_SIZE bytes.
-    pub fn from_reader<R: Read>(mut r: R) -> Pk2Result<Self> {
+    fn from_reader<R: Read>(mut r: R) -> Pk2Result<Self> {
         match r.read_u8()? {
             0 => {
                 r.read_exact(
@@ -341,7 +342,7 @@ impl PackEntry {
         }
     }
 
-    pub fn to_writer<W: Write>(&self, mut w: W) -> io::Result<()> {
+    fn to_writer<W: Write>(&self, mut w: W) -> IoResult<()> {
         match self {
             PackEntry::Empty(EmptyEntry { next_block }) => {
                 w.write_all(

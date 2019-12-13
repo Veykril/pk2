@@ -1,10 +1,11 @@
 use byteorder::{LittleEndian as LE, ReadBytesExt, WriteBytesExt};
 
 use std::fmt;
-use std::io::{self, Read, Write};
+use std::io::{Read, Result as IoResult, Write};
 
 use crate::constants::*;
 use crate::error::{Error, Pk2Result};
+use crate::io::RawIo;
 use crate::Blowfish;
 
 pub struct PackHeader {
@@ -60,8 +61,10 @@ impl PackHeader {
             Ok(())
         }
     }
+}
 
-    pub fn from_reader<R: Read>(mut r: R) -> io::Result<Self> {
+impl RawIo for PackHeader {
+    fn from_reader<R: Read>(mut r: R) -> Pk2Result<Self> {
         let mut signature = [0; 30];
         r.read_exact(&mut signature)?;
         let version = r.read_u32::<LE>()?;
@@ -79,7 +82,7 @@ impl PackHeader {
         })
     }
 
-    pub fn to_writer<W: Write>(&self, mut w: W) -> io::Result<()> {
+    fn to_writer<W: Write>(&self, mut w: W) -> IoResult<()> {
         w.write_all(&self.signature)?;
         w.write_u32::<LE>(self.version)?;
         w.write_u8(self.encrypted as u8)?;
@@ -92,15 +95,25 @@ impl PackHeader {
 
 impl fmt::Debug for PackHeader {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use std::ffi::CStr;
-        unsafe {
-            f.debug_struct("PackHeader")
-                .field("signature", &CStr::from_ptr(self.signature.as_ptr() as _))
-                .field("version", &self.version)
-                .field("encrypted", &self.encrypted)
-                .field("verify", &CStr::from_ptr(self.verify.as_ptr() as _))
-                .field("reserved", &"\"omitted\"")
-                .finish()
-        }
+        let sig_end = self
+            .signature
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or_else(|| self.signature.len());
+        let verify_end = self
+            .verify
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or_else(|| self.verify.len());
+        f.debug_struct("PackHeader")
+            .field(
+                "signature",
+                &std::str::from_utf8(&self.signature[..sig_end]),
+            )
+            .field("version", &self.version)
+            .field("encrypted", &self.encrypted)
+            .field("verify", &std::str::from_utf8(&self.verify[..verify_end]))
+            .field("reserved", &"\"omitted\"")
+            .finish()
     }
 }

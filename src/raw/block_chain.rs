@@ -5,7 +5,7 @@ use super::entry::{DirectoryEntry, PackEntry};
 use super::ChainIndex;
 use crate::constants::*;
 use crate::error::{Error, Pk2Result};
-use crate::io::{file_len, write_block, write_entry_at};
+use crate::io::{file_len, write_block, write_entry_at, RawIo};
 use crate::Blowfish;
 
 /// A collection of [`PackBlock`]s where each blocks next_block field points to
