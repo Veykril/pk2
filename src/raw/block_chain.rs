@@ -1,4 +1,4 @@
-use std::io::{Read, Seek, Write};
+use std::io::{Read, Result as IoResult, Seek, Write};
 use std::ops;
 
 use super::entry::{DirectoryEntry, PackEntry};
@@ -8,13 +8,16 @@ use crate::error::{Error, Pk2Result};
 use crate::io::{file_len, write_block, write_entry_at, RawIo};
 use crate::Blowfish;
 
+pub type OffsetBlock = (u64, PackBlock);
+
 /// A collection of [`PackBlock`]s where each blocks next_block field points to
-/// the following block in the file.
+/// the following block in the file. A PackBlockChain is never empty.
 pub struct PackBlockChain {
     // (offset, block)
     blocks: Vec<(u64, PackBlock)>,
 }
 
+#[allow(clippy::len_without_is_empty)]
 impl PackBlockChain {
     #[inline]
     pub fn from_blocks(blocks: Vec<(u64, PackBlock)>) -> Self {
@@ -34,7 +37,8 @@ impl PackBlockChain {
         ChainIndex(self.blocks[0].0)
     }
 
-    /// Returns the file offset of entry at idx in this block chain.
+    /// Returns the file offset of the entry at the given idx in this block
+    /// chain.
     pub(crate) fn file_offset_for_entry(&self, idx: usize) -> Option<u64> {
         self.blocks
             .get(idx / PK2_FILE_BLOCK_ENTRY_COUNT)
@@ -44,13 +48,27 @@ impl PackBlockChain {
     }
 
     /// Returns the number of PackEntries in this chain.
+    #[inline]
     pub fn num_entries(&self) -> usize {
         self.blocks.len() * PK2_FILE_BLOCK_ENTRY_COUNT
+    }
+
+    /// Returns the number of PackBlocks in this chain. This is always >= 1.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.blocks.len()
     }
 
     /// An iterator over the entries of this chain.
     pub fn entries(&self) -> impl Iterator<Item = &PackEntry> {
         self.blocks.iter().flat_map(|block| &block.1.entries)
+    }
+
+    /// An iterator over the entries of this chain.
+    pub fn entries_mut(&mut self) -> impl Iterator<Item = &mut PackEntry> {
+        self.blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.1.entries)
     }
 
     /// Get the PackEntry at the specified offset.
@@ -126,21 +144,6 @@ pub struct PackBlock {
 }
 
 impl PackBlock {
-    pub fn from_reader<R: Read>(mut r: R) -> Pk2Result<Self> {
-        let mut entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT] = Default::default();
-        for entry in &mut entries {
-            *entry = PackEntry::from_reader(&mut r)?;
-        }
-        Ok(PackBlock { entries })
-    }
-
-    pub fn to_writer<W: Write>(&self, mut w: W) -> Pk2Result<()> {
-        for entry in &self.entries {
-            entry.to_writer(&mut w)?;
-        }
-        Ok(())
-    }
-
     #[inline]
     pub fn entries(&self) -> std::slice::Iter<PackEntry> {
         self.entries.iter()
@@ -159,6 +162,23 @@ impl PackBlock {
     #[inline]
     pub fn get_mut(&mut self, entry: usize) -> Option<&mut PackEntry> {
         self.entries.get_mut(entry)
+    }
+}
+
+impl RawIo for PackBlock {
+    fn from_reader<R: Read>(mut r: R) -> Pk2Result<Self> {
+        let mut entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT] = Default::default();
+        for entry in &mut entries {
+            *entry = PackEntry::from_reader(&mut r)?;
+        }
+        Ok(PackBlock { entries })
+    }
+
+    fn to_writer<W: Write>(&self, mut w: W) -> IoResult<()> {
+        self.entries
+            .iter()
+            .map(|entry| entry.to_writer(&mut w))
+            .collect()
     }
 }
 

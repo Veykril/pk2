@@ -20,15 +20,19 @@ impl BlockManager {
         let mut chains = HashMap::with_capacity_and_hasher(32, NoHashHasherBuilder);
         let mut offsets = vec![PK2_ROOT_BLOCK];
         while let Some(offset) = offsets.pop() {
+            if chains.contains_key(&offset) {
+                // skip offsets that are being pointed to multiple times
+                continue;
+            }
             let block_chain = Self::read_chain_from_file_at(bf, &mut file, offset)?;
             // put all folder offsets of this chain into the stack to parse them next
-            offsets.extend(block_chain.entries().filter_map(|entry| {
-                entry
-                    .as_directory()
-                    .filter(|dir| dir.is_normal_link())
-                    .map(DirectoryEntry::children_position)
-            }));
-            // TODO collisions
+            offsets.extend(
+                block_chain
+                    .entries()
+                    .filter_map(PackEntry::as_directory)
+                    .filter(|d| d.is_normal_link())
+                    .map(DirectoryEntry::children_position),
+            );
             chains.insert(offset, block_chain);
         }
         Ok(BlockManager { chains })
@@ -82,12 +86,15 @@ impl BlockManager {
         if let Some(c) = components.next_back() {
             let parent_index =
                 self.resolve_path_to_block_chain_index_at(current_chain, components.as_path())?;
-            let parent = &self.chains[&parent_index];
-            let name = c.as_os_str().to_str();
+            let parent = self
+                .chains
+                .get(&parent_index)
+                .ok_or(Error::InvalidChainIndex)?;
+            let name = c.as_os_str().to_str().ok_or(Error::NonUnicodePath)?;
             parent
                 .entries()
                 .enumerate()
-                .find(|(_, entry)| entry.name() == name)
+                .find(|(_, entry)| entry.name() == Some(name))
                 .ok_or(Error::NotFound)
                 .map(|(idx, entry)| (parent, idx, entry))
         } else {
@@ -135,15 +142,12 @@ impl BlockManager {
                 .and_then(|chain| chain.find_block_chain_index_of(name))
             {
                 Ok(i) => chain = i,
-                Err(Error::NotFound) => {
-                    if component == &Component::ParentDir {
-                        // lies outside of the archive
-                        return Err(Error::InvalidPath);
-                    } else {
-                        // found a non-existent part, we are done here
-                        break;
-                    }
+                // lies outside of the archive
+                Err(Error::NotFound) if component == &Component::ParentDir => {
+                    return Err(Error::InvalidPath)
                 }
+                // found a non-existent part, we are done here
+                Err(Error::NotFound) => break,
                 Err(e) => return Err(e),
             }
             let _ = components.next();
