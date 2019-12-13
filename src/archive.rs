@@ -90,9 +90,9 @@ where
         };
 
         header.to_writer(&mut file)?;
-        let mut block = PackBlock::new(PK2_ROOT_BLOCK.0);
+        let mut block = PackBlock::default();
         block[0] = PackEntry::new_directory(".".to_owned(), PK2_ROOT_BLOCK, None);
-        crate::io::write_block(blowfish.as_ref(), &mut file, &block)?;
+        crate::io::write_block(blowfish.as_ref(), &mut file, PK2_ROOT_BLOCK.0, &block)?;
 
         let block_manager = BlockManager::new(blowfish.as_ref(), &mut file)?;
         Ok(Pk2 {
@@ -299,12 +299,15 @@ where
         let offset = current_chain
             .file_offset_for_entry(chain_entry_idx)
             .unwrap();
-        let mut block = PackBlock::new(new_chain_offset.0);
+        let mut block = PackBlock::default();
         block[0] = PackEntry::new_directory(".".to_string(), new_chain_offset, None);
         block[1] = PackEntry::new_directory("..".to_string(), current_chain.chain_index(), None);
-        crate::io::write_block(blowfish, &mut file, &block)?;
+        crate::io::write_block(blowfish, &mut file, new_chain_offset.0, &block)?;
         crate::io::write_entry_at(blowfish, file, offset, &current_chain[chain_entry_idx])?;
-        Ok((new_chain_offset, PackBlockChain::from_blocks(vec![block])))
+        Ok((
+            new_chain_offset,
+            PackBlockChain::from_blocks(vec![(new_chain_offset.0, block)]),
+        ))
     }
 }
 

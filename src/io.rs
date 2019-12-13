@@ -15,7 +15,7 @@ pub fn read_block_at<F: io::Seek + io::Read>(
     file.seek(io::SeekFrom::Start(offset))?;
     file.read_exact(&mut buf)?;
     bf.map(|bf| bf.decrypt(&mut buf));
-    PackBlock::from_reader(&buf[..], offset)
+    PackBlock::from_reader(&buf[..])
 }
 
 pub fn file_len<F: io::Seek>(mut file: F) -> io::Result<u64> {
@@ -25,12 +25,13 @@ pub fn file_len<F: io::Seek>(mut file: F) -> io::Result<u64> {
 pub fn write_block<F: io::Seek + io::Write>(
     bf: Option<&Blowfish>,
     mut file: F,
+    offset: u64,
     block: &PackBlock,
 ) -> Pk2Result<()> {
     let mut buf = [0; PK2_FILE_BLOCK_SIZE];
     block.to_writer(&mut buf[..])?;
     bf.map(|bf| bf.encrypt(&mut buf));
-    file.seek(io::SeekFrom::Start(block.offset()))?;
+    file.seek(io::SeekFrom::Start(offset))?;
     file.write_all(&buf)?;
     Ok(())
 }
