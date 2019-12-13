@@ -5,9 +5,9 @@ use std::io::{self, Read, Write};
 use std::num::NonZeroU64;
 use std::time::SystemTime;
 
+use super::ChainIndex;
 use crate::constants::PK2_FILE_ENTRY_SIZE;
 use crate::error::{Error, Pk2Result};
-use crate::ChainIndex;
 use crate::FILETIME;
 
 #[derive(Clone, Eq, PartialEq)]

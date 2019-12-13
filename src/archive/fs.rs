@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use crate::archive::Pk2;
 use crate::raw::block_chain::PackBlockChain;
 use crate::raw::entry::{DirectoryEntry, FileEntry, PackEntry};
-use crate::ChainIndex;
+use crate::raw::ChainIndex;
 
 pub struct File<'pk2, B = std::fs::File> {
     archive: &'pk2 Pk2<B>,
@@ -17,7 +17,7 @@ pub struct File<'pk2, B = std::fs::File> {
 }
 
 impl<'pk2, B> File<'pk2, B> {
-    pub(in crate) fn new(archive: &'pk2 Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
+    pub(super) fn new(archive: &'pk2 Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
         File {
             archive,
             chain,
@@ -118,7 +118,7 @@ impl<'pk2, B> FileMut<'pk2, B>
 where
     B: Read + Write + Seek,
 {
-    pub(in crate) fn new(archive: &'pk2 mut Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
+    pub(super) fn new(archive: &'pk2 mut Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
         FileMut {
             archive,
             chain,
@@ -346,7 +346,7 @@ pub struct Directory<'pk2, B = std::fs::File> {
 }
 
 impl<'pk2, B> Directory<'pk2, B> {
-    pub(in crate) fn new(archive: &'pk2 Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
+    pub(super) fn new(archive: &'pk2 Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
         Directory {
             archive,
             chain,

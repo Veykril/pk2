@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::io;
 use std::path::{Component, Path};
 
+use super::block_chain::PackBlockChain;
+use super::entry::{DirectoryEntry, PackEntry};
+use super::ChainIndex;
 use crate::constants::PK2_ROOT_BLOCK;
 use crate::error::{Error, Pk2Result};
-use crate::raw::block_chain::PackBlockChain;
-use crate::raw::entry::{DirectoryEntry, PackEntry};
 use crate::Blowfish;
-use crate::ChainIndex;
 
 /// Simple BlockManager backed by a hashmap.
 pub struct BlockManager {

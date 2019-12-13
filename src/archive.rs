@@ -5,7 +5,6 @@ use std::{fs as stdfs, io};
 use crate::constants::{PK2_CHECKSUM, PK2_ROOT_BLOCK, PK2_SALT};
 use crate::error::{Error, Pk2Result};
 use crate::Blowfish;
-use crate::ChainIndex;
 
 pub mod fs;
 use self::fs::{Directory, File, FileMut};
@@ -14,6 +13,7 @@ use crate::raw::block_chain::{PackBlock, PackBlockChain};
 use crate::raw::block_manager::BlockManager;
 use crate::raw::entry::*;
 use crate::raw::header::PackHeader;
+use crate::raw::ChainIndex;
 
 pub struct Pk2<B = stdfs::File> {
     // module public due to borrow checker
@@ -50,7 +50,7 @@ where
         Self::_open_in_impl(file, key)
     }
 
-    pub fn _open_in_impl<K: AsRef<[u8]>>(mut file: B, key: K) -> Pk2Result<Self> {
+    fn _open_in_impl<K: AsRef<[u8]>>(mut file: B, key: K) -> Pk2Result<Self> {
         let header = PackHeader::from_reader(&mut file)?;
         header.validate_sig()?;
         let blowfish = if header.encrypted {
@@ -105,26 +105,22 @@ where
 
 impl<B> Pk2<B> {
     #[inline(always)]
-    pub(crate) fn get_chain(&self, chain: ChainIndex) -> Option<&PackBlockChain> {
+    fn get_chain(&self, chain: ChainIndex) -> Option<&PackBlockChain> {
         self.block_manager.get(chain)
     }
 
     #[inline(always)]
-    pub(crate) fn get_chain_mut(&mut self, chain: ChainIndex) -> Option<&mut PackBlockChain> {
+    fn get_chain_mut(&mut self, chain: ChainIndex) -> Option<&mut PackBlockChain> {
         self.block_manager.get_mut(chain)
     }
 
     #[inline(always)]
-    pub(crate) fn get_entry(&self, chain: ChainIndex, entry: usize) -> Option<&PackEntry> {
+    fn get_entry(&self, chain: ChainIndex, entry: usize) -> Option<&PackEntry> {
         self.get_chain(chain).and_then(|chain| chain.get(entry))
     }
 
     #[inline(always)]
-    pub(crate) fn get_entry_mut(
-        &mut self,
-        chain: ChainIndex,
-        entry: usize,
-    ) -> Option<&mut PackEntry> {
+    fn get_entry_mut(&mut self, chain: ChainIndex, entry: usize) -> Option<&mut PackEntry> {
         self.get_chain_mut(chain)
             .and_then(|chain| chain.get_mut(entry))
     }
