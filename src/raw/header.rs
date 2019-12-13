@@ -100,11 +100,6 @@ impl fmt::Debug for PackHeader {
             .iter()
             .position(|&b| b == 0)
             .unwrap_or_else(|| self.signature.len());
-        let verify_end = self
-            .verify
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or_else(|| self.verify.len());
         f.debug_struct("PackHeader")
             .field(
                 "signature",
@@ -112,7 +107,7 @@ impl fmt::Debug for PackHeader {
             )
             .field("version", &self.version)
             .field("encrypted", &self.encrypted)
-            .field("verify", &std::str::from_utf8(&self.verify[..verify_end]))
+            .field("verify", &"\"omitted\"")
             .field("reserved", &"\"omitted\"")
             .finish()
     }
