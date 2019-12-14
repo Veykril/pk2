@@ -4,7 +4,7 @@ use std::path::{Component, Path};
 
 use super::block_chain::PackBlockChain;
 use super::entry::{DirectoryEntry, PackEntry};
-use super::ChainIndex;
+use super::{BlockOffset, ChainIndex};
 use crate::constants::PK2_ROOT_BLOCK;
 use crate::error::{Error, Pk2Result};
 use crate::Blowfish;
@@ -43,16 +43,17 @@ impl BlockManager {
     /// specially crafted file.
     fn read_chain_from_file_at<F: io::Read + io::Seek>(
         bf: Option<&Blowfish>,
-        mut file: F,
-        ChainIndex(mut offset): ChainIndex,
+        file: &mut F,
+        offset: ChainIndex,
     ) -> Pk2Result<PackBlockChain> {
         let mut blocks = Vec::new();
+        let mut offset = offset.into();
         loop {
-            let block = crate::io::read_block_at(bf, &mut file, offset)?;
+            let block = crate::io::read_block_at(bf, &mut *file, offset)?;
             let nc = block.entries().last().and_then(PackEntry::next_block);
             blocks.push((offset, block));
             match nc {
-                Some(nc) => offset = nc.get(),
+                Some(nc) => offset = BlockOffset(nc.get()),
                 None => break Ok(PackBlockChain::from_blocks(blocks)),
             }
         }

@@ -18,6 +18,9 @@ pub const PK2_FILE_BLOCK_SIZE: usize =
 
 pub const PK2_ROOT_BLOCK: ChainIndex = ChainIndex(mem::size_of::<RawPackHeader>() as u64);
 
+pub static PK2_CURRENT_DIR_IDENT: &str = ".";
+pub static PK2_PARENT_DIR_IDENT: &str = "..";
+
 #[repr(packed)]
 pub struct RawPackHeader {
     pub signature: [u8; 30],

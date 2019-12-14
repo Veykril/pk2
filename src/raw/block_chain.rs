@@ -2,31 +2,29 @@ use std::io::{Read, Result as IoResult, Seek, Write};
 use std::ops;
 
 use super::entry::{DirectoryEntry, PackEntry};
-use super::ChainIndex;
+use super::{BlockOffset, ChainIndex, EntryOffset};
 use crate::constants::*;
 use crate::error::{Error, Pk2Result};
 use crate::io::{file_len, write_block, write_entry_at, RawIo};
 use crate::Blowfish;
 
-pub type OffsetBlock = (u64, PackBlock);
-
 /// A collection of [`PackBlock`]s where each blocks next_block field points to
 /// the following block in the file. A PackBlockChain is never empty.
 pub struct PackBlockChain {
     // (offset, block)
-    blocks: Vec<(u64, PackBlock)>,
+    blocks: Vec<(BlockOffset, PackBlock)>,
 }
 
 #[allow(clippy::len_without_is_empty)]
 impl PackBlockChain {
     #[inline]
-    pub fn from_blocks(blocks: Vec<(u64, PackBlock)>) -> Self {
+    pub fn from_blocks(blocks: Vec<(BlockOffset, PackBlock)>) -> Self {
         debug_assert!(!blocks.is_empty());
         PackBlockChain { blocks }
     }
 
     #[inline]
-    pub(crate) fn push(&mut self, offset: u64, block: PackBlock) {
+    pub(crate) fn push(&mut self, offset: BlockOffset, block: PackBlock) {
         self.blocks.push((offset, block));
     }
 
@@ -34,16 +32,18 @@ impl PackBlockChain {
     /// Note: This is the same as its first block
     #[inline]
     pub(crate) fn chain_index(&self) -> ChainIndex {
-        ChainIndex(self.blocks[0].0)
+        ChainIndex((self.blocks[0].0).0)
     }
 
     /// Returns the file offset of the entry at the given idx in this block
     /// chain.
-    pub(crate) fn file_offset_for_entry(&self, idx: usize) -> Option<u64> {
+    pub(crate) fn file_offset_for_entry(&self, idx: usize) -> Option<EntryOffset> {
         self.blocks
             .get(idx / PK2_FILE_BLOCK_ENTRY_COUNT)
-            .map(|(offset, _)| {
-                offset + (PK2_FILE_ENTRY_SIZE * (idx % PK2_FILE_BLOCK_ENTRY_COUNT)) as u64
+            .map(|(BlockOffset(offset), _)| {
+                EntryOffset(
+                    offset + (PK2_FILE_ENTRY_SIZE * (idx % PK2_FILE_BLOCK_ENTRY_COUNT)) as u64,
+                )
             })
     }
 
@@ -108,7 +108,7 @@ impl PackBlockChain {
         bf: Option<&Blowfish>,
         mut file: F,
     ) -> Pk2Result<usize> {
-        let new_block_offset = file_len(&mut file)?;
+        let new_block_offset = file_len(&mut file).map(BlockOffset)?;
         let block = PackBlock::default();
         write_block(bf, &mut file, new_block_offset, &block)?;
         let last_idx = self.num_entries() - 1;

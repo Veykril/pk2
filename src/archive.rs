@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::path::{Component, Path};
 use std::{fs as stdfs, io};
 
-use crate::constants::{PK2_CHECKSUM, PK2_ROOT_BLOCK, PK2_SALT};
+use crate::constants::{PK2_CHECKSUM, PK2_CURRENT_DIR_IDENT, PK2_ROOT_BLOCK, PK2_SALT};
 use crate::error::{Error, Pk2Result};
 use crate::io::RawIo;
 use crate::Blowfish;
@@ -17,7 +17,6 @@ use crate::raw::header::PackHeader;
 use crate::raw::ChainIndex;
 
 pub struct Pk2<B = stdfs::File> {
-    // module public due to borrow checker
     file: RefCell<B>,
     blowfish: Option<Blowfish>,
     block_manager: BlockManager,
@@ -92,8 +91,8 @@ where
 
         header.to_writer(&mut file)?;
         let mut block = PackBlock::default();
-        block[0] = PackEntry::new_directory(".".to_owned(), PK2_ROOT_BLOCK, None);
-        crate::io::write_block(blowfish.as_ref(), &mut file, PK2_ROOT_BLOCK.0, &block)?;
+        block[0] = PackEntry::new_directory(PK2_CURRENT_DIR_IDENT, PK2_ROOT_BLOCK, None);
+        crate::io::write_block(blowfish.as_ref(), &mut file, PK2_ROOT_BLOCK.into(), &block)?;
 
         let block_manager = BlockManager::new(blowfish.as_ref(), &mut file)?;
         Ok(Pk2 {
@@ -215,7 +214,13 @@ where
             .and_then(OsStr::to_str)
             .map(ToOwned::to_owned)
             .ok_or(Error::NonUnicodePath)?;
-        let (chain, entry_idx) = self.create_entry_at(PK2_ROOT_BLOCK, path)?;
+        let (chain, entry_idx) = Self::create_entry_at(
+            &mut self.block_manager,
+            self.blowfish.as_ref(),
+            &mut *self.file.borrow_mut(),
+            PK2_ROOT_BLOCK,
+            path,
+        )?;
         let entry = self.get_entry_mut(chain, entry_idx).unwrap();
         *entry = PackEntry::new_file(file_name, 0, 0, entry.next_block());
         Ok(FileMut::new(self, chain, entry_idx))
@@ -226,17 +231,18 @@ where
     /// current dir parts in a path that in the end directs to an already
     /// existing path might still create new directories.
     fn create_entry_at(
-        &mut self,
+        block_manager: &mut BlockManager,
+        blowfish: Option<&Blowfish>,
+        mut file: &mut B,
         chain: ChainIndex,
         path: &Path,
     ) -> Pk2Result<(ChainIndex, usize)> {
         let (mut current_chain_index, mut components) =
-            self.block_manager.validate_dir_path_until(chain, path)?;
+            block_manager.validate_dir_path_until(chain, path)?;
         while let Some(component) = components.next() {
             match component {
                 Component::Normal(p) => {
-                    let current_chain = self
-                        .block_manager
+                    let current_chain = block_manager
                         .get_mut(current_chain_index)
                         .ok_or(Error::InvalidChainIndex)?;
                     let empty_pos = current_chain.entries().position(PackEntry::is_empty);
@@ -244,26 +250,21 @@ where
                         idx
                     } else {
                         // current chain is full so create a new block and append it
-                        current_chain.create_new_block(
-                            self.blowfish.as_ref(),
-                            &mut *self.file.borrow_mut(),
-                        )?
+                        current_chain.create_new_block(blowfish, &mut file)?
                     };
                     // Are we done after this? if not, create a new blockchain since this is a new
                     // directory
                     if components.peek().is_some() {
-                        let dir_name = p
-                            .to_str()
-                            .map(ToOwned::to_owned)
-                            .ok_or(Error::NonUnicodePath)?;
-                        let (new_chain_offset, block_chain) = Self::create_new_block_chain(
-                            &mut *self.file.borrow_mut(),
-                            self.blowfish.as_ref(),
+                        let dir_name = p.to_str().ok_or(Error::NonUnicodePath)?;
+                        let block_chain = crate::io::create_new_block_chain(
+                            blowfish,
+                            &mut file,
                             current_chain,
                             dir_name,
                             chain_entry_idx,
                         )?;
-                        self.block_manager.insert(new_chain_offset, block_chain);
+                        let new_chain_offset = block_chain.chain_index();
+                        block_manager.insert(new_chain_offset, block_chain);
                         current_chain_index = new_chain_offset;
                     } else {
                         return Ok((current_chain.chain_index(), chain_entry_idx));
@@ -271,12 +272,11 @@ where
                 }
                 Component::CurDir => (),
                 Component::ParentDir => {
-                    current_chain_index = self
-                        .block_manager
+                    current_chain_index = block_manager
                         .get_mut(current_chain_index)
                         .ok_or(Error::InvalidChainIndex)?
                         .entries()
-                        .flat_map(PackEntry::as_directory)
+                        .filter_map(PackEntry::as_directory)
                         .find(|dir| dir.is_parent_link())
                         .map(DirectoryEntry::children_position)
                         .ok_or(Error::InvalidPath)?;
@@ -285,30 +285,6 @@ where
             }
         }
         Err(Error::AlreadyExists)
-    }
-
-    fn create_new_block_chain(
-        mut file: &mut B,
-        blowfish: Option<&Blowfish>,
-        current_chain: &mut PackBlockChain,
-        dir_name: String,
-        chain_entry_idx: usize,
-    ) -> Pk2Result<(ChainIndex, PackBlockChain)> {
-        let new_chain_offset = crate::io::file_len(&mut file).map(ChainIndex)?;
-        let entry = &mut current_chain[chain_entry_idx];
-        *entry = PackEntry::new_directory(dir_name, new_chain_offset, entry.next_block());
-        let offset = current_chain
-            .file_offset_for_entry(chain_entry_idx)
-            .unwrap();
-        let mut block = PackBlock::default();
-        block[0] = PackEntry::new_directory(".".to_string(), new_chain_offset, None);
-        block[1] = PackEntry::new_directory("..".to_string(), current_chain.chain_index(), None);
-        crate::io::write_block(blowfish, &mut file, new_chain_offset.0, &block)?;
-        crate::io::write_entry_at(blowfish, file, offset, &current_chain[chain_entry_idx])?;
-        Ok((
-            new_chain_offset,
-            PackBlockChain::from_blocks(vec![(new_chain_offset.0, block)]),
-        ))
     }
 }
 

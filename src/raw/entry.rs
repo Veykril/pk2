@@ -5,8 +5,8 @@ use std::io::{Read, Result as IoResult, Write};
 use std::num::NonZeroU64;
 use std::time::SystemTime;
 
-use super::ChainIndex;
-use crate::constants::PK2_FILE_ENTRY_SIZE;
+use super::{BlockOffset, ChainIndex};
+use crate::constants::{PK2_CURRENT_DIR_IDENT, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DIR_IDENT};
 use crate::error::{Error, Pk2Result};
 use crate::io::RawIo;
 use crate::FILETIME;
@@ -75,12 +75,12 @@ impl DirectoryEntry {
 
     #[inline]
     pub fn is_current_link(&self) -> bool {
-        self.name == "."
+        self.name == PK2_CURRENT_DIR_IDENT
     }
 
     #[inline]
     pub fn is_parent_link(&self) -> bool {
-        self.name == ".."
+        self.name == PK2_PARENT_DIR_IDENT
     }
 
     #[inline]
@@ -168,20 +168,20 @@ impl Default for PackEntry {
 
 impl PackEntry {
     pub fn new_directory(
-        name: String,
+        name: impl Into<String>,
         pos_children: ChainIndex,
         next_block: Option<NonZeroU64>,
     ) -> Self {
-        PackEntry::Directory(DirectoryEntry::new(name, pos_children, next_block))
+        PackEntry::Directory(DirectoryEntry::new(name.into(), pos_children, next_block))
     }
 
     pub fn new_file(
-        name: String,
+        name: impl Into<String>,
         pos_data: u64,
         size: u32,
         next_block: Option<NonZeroU64>,
     ) -> Self {
-        PackEntry::File(FileEntry::new(name, pos_data, size, next_block))
+        PackEntry::File(FileEntry::new(name.into(), pos_data, size, next_block))
     }
 
     pub fn new_empty(next_block: Option<NonZeroU64>) -> Self {
@@ -229,7 +229,7 @@ impl PackEntry {
         }
     }
 
-    pub fn set_next_block(&mut self, nc: u64) {
+    pub fn set_next_block(&mut self, BlockOffset(nc): BlockOffset) {
         match self {
             PackEntry::Empty(EmptyEntry { next_block, .. })
             | PackEntry::Directory(DirectoryEntry { next_block, .. })
