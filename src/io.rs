@@ -25,6 +25,15 @@ pub fn file_len<F: io::Seek>(mut file: F) -> io::Result<u64> {
     file.seek(io::SeekFrom::End(0))
 }
 
+pub fn allocate_empty_block<F: io::Seek + io::Write>(
+    bf: Option<&Blowfish>,
+    mut file: F,
+) -> Pk2Result<(BlockOffset, PackBlock)> {
+    let offset = file_len(&mut file).map(crate::raw::BlockOffset)?;
+    let block = PackBlock::default();
+    write_block(bf, file, offset, &block).map(|_| (offset, block))
+}
+
 pub fn write_block<F: io::Seek + io::Write>(
     bf: Option<&Blowfish>,
     mut file: F,
@@ -53,6 +62,20 @@ pub fn write_entry_at<F: io::Seek + io::Write>(
     Ok(())
 }
 
+pub fn write_chain_entry<F: io::Seek + io::Write>(
+    bf: Option<&Blowfish>,
+    file: F,
+    chain: &PackBlockChain,
+    entry_index: usize,
+) -> io::Result<()> {
+    write_entry_at(
+        bf,
+        file,
+        chain.file_offset_for_entry(entry_index).unwrap(),
+        &chain[entry_index],
+    )
+}
+
 /// Write data to the end of the file returning the offset of the written
 /// data in the file.
 pub fn write_new_data_buffer<F: io::Seek + io::Write>(mut file: F, data: &[u8]) -> io::Result<u64> {
@@ -70,7 +93,7 @@ pub fn write_data_buffer_at<F: io::Seek + io::Write>(
     file.write_all(data)
 }
 
-pub fn create_new_block_chain<F: io::Seek + io::Write>(
+pub fn allocate_new_block_chain<F: io::Seek + io::Write>(
     blowfish: Option<&Blowfish>,
     mut file: F,
     current_chain: &mut PackBlockChain,

@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::path::{Component, Path};
 use std::{fs as stdfs, io};
 
-use crate::constants::{PK2_CHECKSUM, PK2_CURRENT_DIR_IDENT, PK2_ROOT_BLOCK, PK2_SALT};
+use crate::constants::{PK2_CHECKSUM, PK2_CURRENT_DIR_IDENT, PK2_PARENT_DIR_IDENT, PK2_ROOT_BLOCK};
 use crate::error::{Error, Pk2Result};
 use crate::io::RawIo;
 use crate::Blowfish;
@@ -54,7 +54,7 @@ where
         let header = PackHeader::from_reader(&mut file)?;
         header.validate_sig()?;
         let blowfish = if header.encrypted {
-            let bf = create_blowfish(key.as_ref())?;
+            let bf = Blowfish::new(key.as_ref())?;
             let mut checksum = *PK2_CHECKSUM;
             let _ = bf.encrypt(&mut checksum);
             header.verify(checksum)?;
@@ -85,7 +85,7 @@ where
         let (header, mut file, blowfish) = if key.as_ref().is_empty() {
             (PackHeader::default(), file, None)
         } else {
-            let bf = create_blowfish(key.as_ref())?;
+            let bf = Blowfish::new(key.as_ref())?;
             (PackHeader::new_encrypted(&bf), file, Some(bf))
         };
 
@@ -128,7 +128,7 @@ impl<B> Pk2<B> {
     fn root_resolve_path_to_entry_and_parent<P: AsRef<Path>>(
         &self,
         path: P,
-    ) -> Pk2Result<(&PackBlockChain, usize, &PackEntry)> {
+    ) -> Pk2Result<(ChainIndex, usize, &PackEntry)> {
         self.block_manager
             .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)
     }
@@ -152,7 +152,6 @@ impl<B> Pk2<B> {
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Pk2Result<File<B>> {
         let (chain, entry_idx, entry) = self.root_resolve_path_to_entry_and_parent(path)?;
         Self::is_file(entry)?;
-        let chain = chain.chain_index();
         Ok(File::new(self, chain, entry_idx))
     }
 
@@ -164,7 +163,7 @@ impl<B> Pk2<B> {
         {
             Ok((chain, entry_idx, entry)) => {
                 Self::is_dir(entry)?;
-                (chain.chain_index(), entry_idx)
+                (chain, entry_idx)
             }
             // path was just root
             Err(Error::InvalidPath) => (PK2_ROOT_BLOCK, 0),
@@ -181,38 +180,33 @@ where
     pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<FileMut<B>> {
         let (chain, entry_idx, entry) = self.root_resolve_path_to_entry_and_parent(path)?;
         Self::is_file(entry)?;
-        let chain = chain.chain_index();
         Ok(FileMut::new(self, chain, entry_idx))
     }
 
     /// Currently only replaces the entry with an empty one making the data
     /// inaccessible by normal means
     pub fn delete_file<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<()> {
-        let (chain, entry_idx, entry) = self.root_resolve_path_to_entry_and_parent(path)?;
+        let (chain_index, entry_idx, entry) = self
+            .block_manager
+            .resolve_path_to_entry_and_parent_mut(PK2_ROOT_BLOCK, check_root(path.as_ref())?)?;
         Self::is_file(entry)?;
+        entry.clear();
 
-        let next_block = entry.next_block();
-        let chain_index = chain.chain_index();
-        let file_offset = chain.file_offset_for_entry(entry_idx).unwrap();
-        self.get_entry_mut(chain_index, entry_idx)
-            .map(PackEntry::clear);
-
-        crate::io::write_entry_at(
+        crate::io::write_chain_entry(
             self.blowfish.as_ref(),
             &mut *self.file.borrow_mut(),
-            file_offset,
-            &PackEntry::new_empty(next_block),
+            self.get_chain(chain_index).unwrap(),
+            entry_idx,
         )?;
         Ok(())
     }
 
     pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<FileMut<B>> {
-        use std::ffi::OsStr;
         let path = check_root(path.as_ref())?;
         let file_name = path
             .file_name()
-            .and_then(OsStr::to_str)
-            .map(ToOwned::to_owned)
+            .ok_or(Error::InvalidPath)?
+            .to_str()
             .ok_or(Error::NonUnicodePath)?;
         let (chain, entry_idx) = Self::create_entry_at(
             &mut self.block_manager,
@@ -237,6 +231,7 @@ where
         chain: ChainIndex,
         path: &Path,
     ) -> Pk2Result<(ChainIndex, usize)> {
+        use crate::io::{allocate_empty_block, allocate_new_block_chain, write_chain_entry};
         let (mut current_chain_index, mut components) =
             block_manager.validate_dir_path_until(chain, path)?;
         while let Some(component) = components.next() {
@@ -250,58 +245,46 @@ where
                         idx
                     } else {
                         // current chain is full so create a new block and append it
-                        current_chain.create_new_block(blowfish, &mut file)?
+                        //current_chain.create_new_block(blowfish, &mut file)?
+                        let (offset, block) = allocate_empty_block(blowfish, &mut file)?;
+                        let chain_entry_idx = current_chain.num_entries();
+                        current_chain.push_and_link(offset, block);
+                        write_chain_entry(
+                            blowfish,
+                            &mut file,
+                            &current_chain,
+                            chain_entry_idx - 1,
+                        )?;
+                        chain_entry_idx
                     };
                     // Are we done after this? if not, create a new blockchain since this is a new
                     // directory
                     if components.peek().is_some() {
                         let dir_name = p.to_str().ok_or(Error::NonUnicodePath)?;
-                        let block_chain = crate::io::create_new_block_chain(
+                        let block_chain = allocate_new_block_chain(
                             blowfish,
                             &mut file,
                             current_chain,
                             dir_name,
                             chain_entry_idx,
                         )?;
-                        let new_chain_offset = block_chain.chain_index();
-                        block_manager.insert(new_chain_offset, block_chain);
-                        current_chain_index = new_chain_offset;
+                        current_chain_index = block_chain.chain_index();
+                        block_manager.insert(current_chain_index, block_chain);
                     } else {
                         return Ok((current_chain.chain_index(), chain_entry_idx));
                     }
                 }
-                Component::CurDir => (),
                 Component::ParentDir => {
                     current_chain_index = block_manager
                         .get_mut(current_chain_index)
-                        .ok_or(Error::InvalidChainIndex)?
-                        .entries()
-                        .filter_map(PackEntry::as_directory)
-                        .find(|dir| dir.is_parent_link())
-                        .map(DirectoryEntry::children_position)
-                        .ok_or(Error::InvalidPath)?;
+                        .ok_or(Error::InvalidChainIndex)
+                        .and_then(|entry| entry.find_block_chain_index_of(PK2_PARENT_DIR_IDENT))?
                 }
+                Component::CurDir => (),
                 _ => unreachable!(),
             }
         }
         Err(Error::AlreadyExists)
-    }
-}
-
-fn create_blowfish(key: &[u8]) -> Pk2Result<Blowfish> {
-    let mut key = key.to_vec();
-    gen_final_blowfish_key_inplace(&mut key);
-    Blowfish::new_varkey(&key)
-}
-
-fn gen_final_blowfish_key_inplace(key: &mut [u8]) {
-    let key_len = key.len().min(56);
-
-    let mut base_key = [0; 56];
-    base_key[0..PK2_SALT.len()].copy_from_slice(&PK2_SALT);
-
-    for i in 0..key_len {
-        key[i] ^= base_key[i];
     }
 }
 

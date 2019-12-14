@@ -1,12 +1,11 @@
-use std::io::{Read, Result as IoResult, Seek, Write};
+use std::io::{Read, Result as IoResult, Write};
 use std::ops;
 
 use super::entry::{DirectoryEntry, PackEntry};
 use super::{BlockOffset, ChainIndex, EntryOffset};
 use crate::constants::*;
 use crate::error::{Error, Pk2Result};
-use crate::io::{file_len, write_block, write_entry_at, RawIo};
-use crate::Blowfish;
+use crate::io::RawIo;
 
 /// A collection of [`PackBlock`]s where each blocks next_block field points to
 /// the following block in the file. A PackBlockChain is never empty.
@@ -24,20 +23,27 @@ impl PackBlockChain {
     }
 
     #[inline]
-    pub(crate) fn push(&mut self, offset: BlockOffset, block: PackBlock) {
+    pub fn push_and_link(&mut self, offset: BlockOffset, block: PackBlock) {
+        self.last_entry_mut().set_next_block(offset);
         self.blocks.push((offset, block));
+    }
+
+    #[inline]
+    pub fn pop_and_unlink(&mut self) {
+        self.blocks.pop();
+        self.last_entry_mut().set_next_block(BlockOffset(0));
     }
 
     /// This blockchains chain index/file offset.
     /// Note: This is the same as its first block
     #[inline]
-    pub(crate) fn chain_index(&self) -> ChainIndex {
+    pub fn chain_index(&self) -> ChainIndex {
         ChainIndex((self.blocks[0].0).0)
     }
 
     /// Returns the file offset of the entry at the given idx in this block
     /// chain.
-    pub(crate) fn file_offset_for_entry(&self, idx: usize) -> Option<EntryOffset> {
+    pub fn file_offset_for_entry(&self, idx: usize) -> Option<EntryOffset> {
         self.blocks
             .get(idx / PK2_FILE_BLOCK_ENTRY_COUNT)
             .map(|(BlockOffset(offset), _)| {
@@ -57,6 +63,19 @@ impl PackBlockChain {
     #[inline]
     pub fn len(&self) -> usize {
         self.blocks.len()
+    }
+
+    /// Returns the last entry of this PackBlockChain.
+    #[inline]
+    pub fn last_entry(&self) -> &PackEntry {
+        &self[self.num_entries() - 1]
+    }
+
+    /// Returns the last entry of this PackBlockChain.
+    #[inline]
+    pub fn last_entry_mut(&mut self) -> &mut PackEntry {
+        let last = self.num_entries() - 1;
+        &mut self[last]
     }
 
     /// An iterator over the entries of this chain.
@@ -91,36 +110,10 @@ impl PackBlockChain {
     pub fn find_block_chain_index_of(&self, directory: &str) -> Pk2Result<ChainIndex> {
         self.entries()
             .find(|entry| entry.name() == Some(directory))
-            .ok_or(Error::NotFound)
-            .and_then(|entry| {
-                entry
-                    .as_directory()
-                    .map(DirectoryEntry::children_position)
-                    .ok_or(Error::ExpectedDirectory)
-            })
-    }
-
-    /// Creates a new block in the file, appends it to this chain and returns
-    /// the entry index of the first entry of the new block relative to the
-    /// chain.
-    pub(crate) fn create_new_block<F: Write + Seek>(
-        &mut self,
-        bf: Option<&Blowfish>,
-        mut file: F,
-    ) -> Pk2Result<usize> {
-        let new_block_offset = file_len(&mut file).map(BlockOffset)?;
-        let block = PackBlock::default();
-        write_block(bf, &mut file, new_block_offset, &block)?;
-        let last_idx = self.num_entries() - 1;
-        self[last_idx].set_next_block(new_block_offset);
-        write_entry_at(
-            bf,
-            &mut file,
-            self.file_offset_for_entry(last_idx).unwrap(),
-            &self[last_idx],
-        )?;
-        self.push(new_block_offset, block);
-        Ok(last_idx + 1)
+            .ok_or(Error::NotFound)?
+            .as_directory()
+            .map(DirectoryEntry::children_position)
+            .ok_or(Error::ExpectedDirectory)
     }
 }
 

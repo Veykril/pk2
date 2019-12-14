@@ -74,6 +74,23 @@ impl BlockManager {
         self.chains.insert(chain, block);
     }
 
+    pub fn resolve_path_to_parent<'path>(
+        &self,
+        current_chain: ChainIndex,
+        path: &'path Path,
+    ) -> Pk2Result<(ChainIndex, &'path str)> {
+        let mut components = path.components();
+
+        if let Some(c) = components.next_back() {
+            let parent_index =
+                self.resolve_path_to_block_chain_index_at(current_chain, components.as_path())?;
+            let name = c.as_os_str().to_str().ok_or(Error::NonUnicodePath)?;
+            Ok((parent_index, name))
+        } else {
+            Err(Error::InvalidPath)
+        }
+    }
+
     /// Resolves a path from the specified chain to a parent chain and the entry
     /// Returns Ok(None) if the path is empty, otherwise (blockchain,
     /// entry_index, entry)
@@ -81,26 +98,36 @@ impl BlockManager {
         &self,
         current_chain: ChainIndex,
         path: &Path,
-    ) -> Pk2Result<(&PackBlockChain, usize, &PackEntry)> {
-        let mut components = path.components();
+    ) -> Pk2Result<(ChainIndex, usize, &PackEntry)> {
+        self.resolve_path_to_parent(current_chain, path)
+            .and_then(|(parent_index, name)| {
+                self.chains
+                    .get(&parent_index)
+                    .ok_or(Error::InvalidChainIndex)?
+                    .entries()
+                    .enumerate()
+                    .find(|(_, entry)| entry.name() == Some(name))
+                    .ok_or(Error::NotFound)
+                    .map(|(idx, entry)| (parent_index, idx, entry))
+            })
+    }
 
-        if let Some(c) = components.next_back() {
-            let parent_index =
-                self.resolve_path_to_block_chain_index_at(current_chain, components.as_path())?;
-            let parent = self
-                .chains
-                .get(&parent_index)
-                .ok_or(Error::InvalidChainIndex)?;
-            let name = c.as_os_str().to_str().ok_or(Error::NonUnicodePath)?;
-            parent
-                .entries()
-                .enumerate()
-                .find(|(_, entry)| entry.name() == Some(name))
-                .ok_or(Error::NotFound)
-                .map(|(idx, entry)| (parent, idx, entry))
-        } else {
-            Err(Error::InvalidPath)
-        }
+    pub fn resolve_path_to_entry_and_parent_mut(
+        &mut self,
+        current_chain: ChainIndex,
+        path: &Path,
+    ) -> Pk2Result<(ChainIndex, usize, &mut PackEntry)> {
+        self.resolve_path_to_parent(current_chain, path)
+            .and_then(move |(parent_index, name)| {
+                self.chains
+                    .get_mut(&parent_index)
+                    .ok_or(Error::InvalidChainIndex)?
+                    .entries_mut()
+                    .enumerate()
+                    .find(|(_, entry)| entry.name() == Some(name))
+                    .ok_or(Error::NotFound)
+                    .map(|(idx, entry)| (parent_index, idx, entry))
+            })
     }
 
     /// Resolves a path to a [`PackBlockChain`] index starting from the given
@@ -117,8 +144,8 @@ impl BlockManager {
                 .ok_or(Error::NonUnicodePath)?;
             self.chains
                 .get(&idx)
-                .ok_or(Error::InvalidChainIndex)
-                .and_then(|chain| chain.find_block_chain_index_of(comp))
+                .ok_or(Error::InvalidChainIndex)?
+                .find_block_chain_index_of(comp)
         })
     }
 
@@ -139,8 +166,8 @@ impl BlockManager {
             match self
                 .chains
                 .get(&chain)
-                .ok_or(Error::InvalidChainIndex)
-                .and_then(|chain| chain.find_block_chain_index_of(name))
+                .ok_or(Error::InvalidChainIndex)?
+                .find_block_chain_index_of(name)
             {
                 Ok(i) => chain = i,
                 // lies outside of the archive
