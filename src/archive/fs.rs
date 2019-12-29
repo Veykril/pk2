@@ -364,7 +364,7 @@ impl<'pk2, B> Directory<'pk2, B> {
 
     // returns the chain this folder represents
     #[inline]
-    fn dir_chain(&self, chain: ChainIndex) -> &PackBlockChain {
+    fn dir_chain(&self, chain: ChainIndex) -> &'pk2 PackBlockChain {
         self.archive
             .get_chain(chain)
             .expect("invalid dir object, this is a bug")
@@ -387,32 +387,28 @@ impl<'pk2, B> Directory<'pk2, B> {
     }
 
     /// Returns an iterator over all files in this directory.
-    pub fn files(&'pk2 self) -> impl Iterator<Item = File<'pk2, B>> {
+    pub fn files(&self) -> impl Iterator<Item = File<'pk2, B>> {
         let chain = self.entry().children_position();
+        let archive = self.archive;
         self.dir_chain(chain)
             .entries()
             .enumerate()
-            .flat_map(move |(idx, entry)| {
-                entry.as_file().map(|_| File::new(self.archive, chain, idx))
-            })
+            .flat_map(move |(idx, entry)| entry.as_file().map(|_| File::new(archive, chain, idx)))
     }
 
     /// Returns an iterator over all items in this directory excluding `.` and
     /// `..`.
-    pub fn entries(&'pk2 self) -> impl Iterator<Item = DirEntry<'pk2, B>> {
+    pub fn entries(&self) -> impl Iterator<Item = DirEntry<'pk2, B>> {
         let chain = self.entry().children_position();
+        let archive = self.archive;
         self.dir_chain(chain)
             .entries()
             .enumerate()
             .flat_map(move |(idx, entry)| match entry {
-                PackEntry::File(_) => Some(DirEntry::File(File::new(self.archive, chain, idx))),
+                PackEntry::File(_) => Some(DirEntry::File(File::new(archive, chain, idx))),
                 PackEntry::Directory(dir) => {
                     if dir.is_normal_link() {
-                        Some(DirEntry::Directory(Directory::new(
-                            self.archive,
-                            chain,
-                            idx,
-                        )))
+                        Some(DirEntry::Directory(Directory::new(archive, chain, idx)))
                     } else {
                         None
                     }

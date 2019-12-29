@@ -171,6 +171,34 @@ impl<B> Pk2<B> {
         };
         Ok(Directory::new(self, chain, entry_idx))
     }
+
+    // ideally we would have a files iterator here, but doing so would require
+    // either existential types to be stable or rewriting all iterators in this
+    // crate into own types
+    // FIXME: paths start with `.` instead of `/` due to how names work currently
+    pub fn for_each_file<P, CB>(&self, base: P, mut cb: CB) -> Pk2Result<()>
+    where
+        P: AsRef<Path>,
+        CB: FnMut(&Path, File<B>) -> (),
+    {
+        let mut stack = vec![self.open_directory(base)?];
+        let mut path = std::path::PathBuf::new();
+        while let Some(dir) = stack.pop() {
+            path.push(dir.name());
+            for entry in dir.entries() {
+                match entry {
+                    self::fs::DirEntry::Directory(dir) => stack.push(dir),
+                    self::fs::DirEntry::File(file) => {
+                        path.push(file.name());
+                        cb(&path, file);
+                        path.pop();
+                    }
+                }
+            }
+            path.pop();
+        }
+        Ok(())
+    }
 }
 
 impl<B> Pk2<B>
