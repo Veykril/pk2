@@ -109,7 +109,7 @@ impl PackBlockChain {
     /// successful.
     pub fn find_block_chain_index_of(&self, directory: &str) -> Pk2Result<ChainIndex> {
         self.entries()
-            .find(|entry| entry.name() == Some(directory))
+            .find(|entry| entry.name_eq_ignore_ascii_case(directory))
             .ok_or(Error::NotFound)?
             .as_directory()
             .map(DirectoryEntry::children_position)

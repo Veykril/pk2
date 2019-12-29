@@ -245,6 +245,12 @@ impl PackEntry {
         }
     }
 
+    pub fn name_eq_ignore_ascii_case(&self, other: &str) -> bool {
+        self.name()
+            .map(|this| this.eq_ignore_ascii_case(other))
+            .unwrap_or(false)
+    }
+
     #[inline]
     pub fn is_empty(&self) -> bool {
         match self {

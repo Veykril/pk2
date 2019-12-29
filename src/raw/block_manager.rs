@@ -106,7 +106,7 @@ impl BlockManager {
                     .ok_or(Error::InvalidChainIndex)?
                     .entries()
                     .enumerate()
-                    .find(|(_, entry)| entry.name() == Some(name))
+                    .find(|(_, entry)| entry.name_eq_ignore_ascii_case(name))
                     .ok_or(Error::NotFound)
                     .map(|(idx, entry)| (parent_index, idx, entry))
             })
@@ -124,7 +124,7 @@ impl BlockManager {
                     .ok_or(Error::InvalidChainIndex)?
                     .entries_mut()
                     .enumerate()
-                    .find(|(_, entry)| entry.name() == Some(name))
+                    .find(|(_, entry)| entry.name_eq_ignore_ascii_case(name))
                     .ok_or(Error::NotFound)
                     .map(|(idx, entry)| (parent_index, idx, entry))
             })
