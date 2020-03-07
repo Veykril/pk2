@@ -229,8 +229,8 @@ where
         // we've got the data in our buffer so read it from there
         } else if !self.data.is_empty() {
             let seek_pos = self.seek_pos as usize;
-            let len = buf.len().min((self.data.len() - seek_pos) as usize);
-            buf[..len].copy_from_slice(&self.data[seek_pos..seek_pos + len]);
+            let len = buf.len().min(self.data.len() - seek_pos);
+            buf[..len].copy_from_slice(&self.data[seek_pos..][..len]);
             self.seek(SeekFrom::Current(len as i64))?;
             Ok(len)
         // we dont have the data yet so fetch it then read again
