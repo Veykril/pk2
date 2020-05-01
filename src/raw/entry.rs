@@ -1,5 +1,4 @@
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
-use encoding_rs::EUC_KR;
 
 use std::io::{Read, Result as IoResult, Write};
 use std::num::NonZeroU64;
@@ -301,10 +300,13 @@ impl RawIo for PackEntry {
                         .iter()
                         .position(|b| *b == 0)
                         .unwrap_or_else(|| buf.len());
-                    EUC_KR
+                    #[cfg(feature = "euc")]
+                    let name = encoding_rs::EUC_KR
                         .decode_without_bom_handling(&buf[..end])
-                        .0
-                        .into_owned()
+                        .0;
+                    #[cfg(not(feature = "euc"))]
+                    let name = String::from_utf8_lossy(&buf[..end]);
+                    name.into_owned()
                 };
                 let access_time = FILETIME {
                     dwLowDateTime: r.read_u32::<LE>()?,
@@ -376,7 +378,10 @@ impl RawIo for PackEntry {
                 ..
             }) => {
                 w.write_u8(if self.is_dir() { 1 } else { 2 })?;
-                let mut encoded = EUC_KR.encode(name).0.into_owned();
+                #[cfg(feature = "euc")]
+                let mut encoded = encoding_rs::EUC_KR.encode(name).0.into_owned();
+                #[cfg(not(feature = "euc"))]
+                let mut encoded = name.as_bytes().to_owned();
                 encoded.resize(81, 0);
                 w.write_all(&encoded)?;
                 w.write_u32::<LE>(access_time.dwLowDateTime)?;
