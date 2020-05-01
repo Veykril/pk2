@@ -31,6 +31,7 @@ impl PackBlockChain {
     #[inline]
     pub fn pop_and_unlink(&mut self) {
         self.blocks.pop();
+        assert!(!self.blocks.is_empty());
         self.last_entry_mut().set_next_block(BlockOffset(0));
     }
 
