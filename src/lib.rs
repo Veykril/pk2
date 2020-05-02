@@ -1,5 +1,4 @@
 #![warn(clippy::all)]
-#![allow(clippy::match_bool)]
 
 pub mod archive;
 pub mod constants;

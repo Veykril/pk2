@@ -1,8 +1,10 @@
 #![allow(clippy::match_ref_pats)]
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::path::Path;
 use std::time::SystemTime;
 
 use crate::archive::Pk2;
+use crate::error::{Error, Pk2Result};
 use crate::raw::block_chain::PackBlockChain;
 use crate::raw::entry::{DirectoryEntry, FileEntry, PackEntry};
 use crate::raw::ChainIndex;
@@ -339,6 +341,32 @@ where
     }
 }
 
+pub enum DirEntry<'pk2, B> {
+    Directory(Directory<'pk2, B>),
+    File(File<'pk2, B>),
+}
+
+impl<'pk2, B> DirEntry<'pk2, B> {
+    fn from(
+        entry: &PackEntry,
+        archive: &'pk2 Pk2<B>,
+        chain: ChainIndex,
+        idx: usize,
+    ) -> Option<Self> {
+        match entry {
+            PackEntry::File(_) => Some(DirEntry::File(File::new(archive, chain, idx))),
+            PackEntry::Directory(dir) => {
+                if dir.is_normal_link() {
+                    Some(DirEntry::Directory(Directory::new(archive, chain, idx)))
+                } else {
+                    None
+                }
+            }
+            PackEntry::Empty(_) => None,
+        }
+    }
+}
+
 pub struct Directory<'pk2, B = std::fs::File> {
     archive: &'pk2 Pk2<B>,
     chain: ChainIndex,
@@ -386,6 +414,39 @@ impl<'pk2, B> Directory<'pk2, B> {
         self.entry().create_time.into_systime()
     }
 
+    pub fn open_file(&self, path: impl AsRef<Path>) -> Pk2Result<File<'pk2, B>> {
+        let (chain, entry_idx, entry) = self
+            .archive
+            .block_manager
+            .resolve_path_to_entry_and_parent(self.chain, path.as_ref())?;
+        Pk2::<B>::is_file(entry).map(|_| File::new(self.archive, chain, entry_idx))
+    }
+
+    pub fn open_directory(&self, path: impl AsRef<Path>) -> Pk2Result<Directory<'pk2, B>> {
+        let (chain, entry_idx, entry) = self
+            .archive
+            .block_manager
+            .resolve_path_to_entry_and_parent(self.chain, path.as_ref())?;
+
+        if entry
+            .as_directory()
+            .map(DirectoryEntry::is_normal_link)
+            .unwrap_or(false)
+        {
+            Ok(Directory::new(self.archive, chain, entry_idx))
+        } else {
+            Err(Error::NotFound)
+        }
+    }
+
+    pub fn open(&self, path: impl AsRef<Path>) -> Pk2Result<DirEntry<'pk2, B>> {
+        let (chain, entry_idx, entry) = self
+            .archive
+            .block_manager
+            .resolve_path_to_entry_and_parent(self.chain, path.as_ref())?;
+        DirEntry::from(entry, self.archive, chain, entry_idx).ok_or(Error::NotFound)
+    }
+
     /// Returns an iterator over all files in this directory.
     pub fn files(&self) -> impl Iterator<Item = File<'pk2, B>> {
         let chain = self.entry().children_position();
@@ -404,21 +465,6 @@ impl<'pk2, B> Directory<'pk2, B> {
         self.dir_chain(chain)
             .entries()
             .enumerate()
-            .flat_map(move |(idx, entry)| match entry {
-                PackEntry::File(_) => Some(DirEntry::File(File::new(archive, chain, idx))),
-                PackEntry::Directory(dir) => {
-                    if dir.is_normal_link() {
-                        Some(DirEntry::Directory(Directory::new(archive, chain, idx)))
-                    } else {
-                        None
-                    }
-                }
-                PackEntry::Empty(_) => None,
-            })
+            .flat_map(move |(idx, entry)| DirEntry::from(entry, archive, chain, idx))
     }
-}
-
-pub enum DirEntry<'pk2, B> {
-    Directory(Directory<'pk2, B>),
-    File(File<'pk2, B>),
 }

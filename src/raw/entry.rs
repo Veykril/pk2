@@ -196,6 +196,14 @@ impl PackEntry {
     }
 
     #[inline]
+    pub fn as_directory_mut(&mut self) -> Option<&mut DirectoryEntry> {
+        match self {
+            PackEntry::Directory(entry) => Some(entry),
+            _ => None,
+        }
+    }
+
+    #[inline]
     pub fn as_file(&self) -> Option<&FileEntry> {
         match self {
             PackEntry::File(entry) => Some(entry),

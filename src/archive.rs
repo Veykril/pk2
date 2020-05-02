@@ -11,7 +11,7 @@ use crate::io::RawIo;
 use crate::Blowfish;
 
 pub mod fs;
-use self::fs::{Directory, File, FileMut};
+use self::fs::{DirEntry, Directory, File, FileMut};
 
 use crate::raw::block_chain::{PackBlock, PackBlockChain};
 use crate::raw::block_manager::BlockManager;
@@ -136,14 +136,14 @@ impl<B> Pk2<B> {
             .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)
     }
 
-    fn is_file(entry: &PackEntry) -> Pk2Result<()> {
+    pub(self) fn is_file(entry: &PackEntry) -> Pk2Result<()> {
         match entry.is_file() {
             true => Ok(()),
             false => Err(Error::ExpectedFile),
         }
     }
 
-    fn is_dir(entry: &PackEntry) -> Pk2Result<()> {
+    pub(self) fn is_dir(entry: &PackEntry) -> Pk2Result<()> {
         match entry.is_dir() {
             true => Ok(()),
             false => Err(Error::ExpectedDirectory),
@@ -178,10 +178,11 @@ impl<B> Pk2<B> {
     /// Invokes cb on every file in the sub directories of `base`, including
     /// files inside of its subdirectories. Cb gets invoked with its
     /// relative path to `base` and the file object.
+    // Todo, replace this with a file_paths iterator once generators are stable
     pub fn for_each_file(
         &self,
         base: impl AsRef<Path>,
-        mut cb: impl FnMut(&Path, File<B>),
+        mut cb: impl FnMut(&Path, File<B>) -> Pk2Result<()>,
     ) -> Pk2Result<()> {
         let mut path = std::path::PathBuf::new();
         let mut stack = vec![self.open_directory(base)?];
@@ -195,13 +196,13 @@ impl<B> Pk2<B> {
             let mut files_only = true;
             for entry in dir.entries() {
                 match entry {
-                    self::fs::DirEntry::Directory(dir) => {
+                    DirEntry::Directory(dir) => {
                         stack.push(dir);
                         files_only = false;
                     }
-                    self::fs::DirEntry::File(file) => {
+                    DirEntry::File(file) => {
                         path.push(file.name());
-                        cb(&path, file);
+                        cb(&path, file)?;
                         path.pop();
                     }
                 }
