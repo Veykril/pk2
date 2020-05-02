@@ -2,7 +2,10 @@ use std::cell::RefCell;
 use std::path::{Component, Path};
 use std::{fs as stdfs, io};
 
-use crate::constants::{PK2_CHECKSUM, PK2_CURRENT_DIR_IDENT, PK2_PARENT_DIR_IDENT, PK2_ROOT_BLOCK};
+use crate::constants::{
+    PK2_CHECKSUM, PK2_CURRENT_DIR_IDENT, PK2_PARENT_DIR_IDENT, PK2_ROOT_BLOCK,
+    PK2_ROOT_BLOCK_VIRTUAL,
+};
 use crate::error::{Error, Pk2Result};
 use crate::io::RawIo;
 use crate::Blowfish;
@@ -166,7 +169,7 @@ impl<B> Pk2<B> {
                 (chain, entry_idx)
             }
             // path was just root
-            Err(Error::InvalidPath) => (PK2_ROOT_BLOCK, 0),
+            Err(Error::InvalidPath) => (PK2_ROOT_BLOCK_VIRTUAL, 0),
             Err(e) => return Err(e),
         };
         Ok(Directory::new(self, chain, entry_idx))
@@ -181,8 +184,8 @@ impl<B> Pk2<B> {
         P: AsRef<Path>,
         CB: FnMut(&Path, File<B>) -> (),
     {
-        let mut stack = vec![self.open_directory(base)?];
-        let mut path = std::path::PathBuf::new();
+        let mut path = base.as_ref().to_owned();
+        let mut stack = vec![self.open_directory(&path)?];
         while let Some(dir) = stack.pop() {
             path.push(dir.name());
             for entry in dir.entries() {

@@ -17,6 +17,8 @@ pub const PK2_FILE_BLOCK_SIZE: usize =
     mem::size_of::<[RawPackFileEntry; PK2_FILE_BLOCK_ENTRY_COUNT]>();
 
 pub const PK2_ROOT_BLOCK: ChainIndex = ChainIndex(mem::size_of::<RawPackHeader>() as u64);
+// Sentinel entry to give the root block a proper path descriptor
+pub const PK2_ROOT_BLOCK_VIRTUAL: ChainIndex = ChainIndex(0 as u64);
 
 pub static PK2_CURRENT_DIR_IDENT: &str = ".";
 pub static PK2_PARENT_DIR_IDENT: &str = "..";

@@ -236,7 +236,6 @@ fn pack(matches: &ArgMatches<'static>) {
 }
 
 fn pack_files(out_archive: &mut archive::Pk2, dir_path: &Path, base: &Path) {
-    // ngl working with paths in rust sucks
     use std::io::{Read, Write};
     let mut buf = Vec::new();
     for entry in std::fs::read_dir(dir_path).unwrap() {
@@ -249,10 +248,7 @@ fn pack_files(out_archive: &mut archive::Pk2, dir_path: &Path, base: &Path) {
             let mut file = std::fs::File::open(&path).unwrap();
             file.read_to_end(&mut buf).unwrap();
             out_archive
-                .create_file(
-                    (<str as std::convert::AsRef<Path>>::as_ref("/"))
-                        .join(path.strip_prefix(base).unwrap()),
-                )
+                .create_file(Path::new("/").join(path.strip_prefix(base).unwrap()))
                 .unwrap()
                 .write_all(&buf)
                 .unwrap();

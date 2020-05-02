@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::io;
 use std::path::{Component, Path};
 
-use super::block_chain::PackBlockChain;
+use super::block_chain::{PackBlock, PackBlockChain};
 use super::entry::{DirectoryEntry, PackEntry};
 use super::{BlockOffset, ChainIndex};
-use crate::constants::PK2_ROOT_BLOCK;
+use crate::constants::{PK2_ROOT_BLOCK, PK2_ROOT_BLOCK_VIRTUAL};
 use crate::error::{Error, Pk2Result};
 use crate::Blowfish;
 
@@ -35,7 +35,19 @@ impl BlockManager {
             );
             chains.insert(offset, block_chain);
         }
-        Ok(BlockManager { chains })
+        let mut this = BlockManager { chains };
+        this.insert_virtual_root();
+        Ok(this)
+    }
+
+    fn insert_virtual_root(&mut self) {
+        // dummy entry to give root a proper name
+        let mut virtual_root = PackBlockChain::from_blocks(vec![(
+            PK2_ROOT_BLOCK_VIRTUAL.into(),
+            PackBlock::default(),
+        )]);
+        virtual_root[0] = PackEntry::new_directory("/", PK2_ROOT_BLOCK, None);
+        self.chains.insert(virtual_root.chain_index(), virtual_root);
     }
 
     /// Reads a [`PackBlockChain`] from the given file at the specified offset.
@@ -66,6 +78,7 @@ impl BlockManager {
 
     #[inline]
     pub fn get_mut(&mut self, chain: ChainIndex) -> Option<&mut PackBlockChain> {
+        assert_ne!(chain, PK2_ROOT_BLOCK_VIRTUAL);
         self.chains.get_mut(&chain)
     }
 
