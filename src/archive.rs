@@ -175,22 +175,30 @@ impl<B> Pk2<B> {
         Ok(Directory::new(self, chain, entry_idx))
     }
 
-    // ideally we would have a files iterator here, but doing so would require
-    // either existential types to be stable or rewriting all iterators in this
-    // crate into own types
-    // FIXME: paths start with `.` instead of `/` due to how names work currently
-    pub fn for_each_file<P, CB>(&self, base: P, mut cb: CB) -> Pk2Result<()>
-    where
-        P: AsRef<Path>,
-        CB: FnMut(&Path, File<B>) -> (),
-    {
-        let mut path = base.as_ref().to_owned();
-        let mut stack = vec![self.open_directory(&path)?];
+    /// Invokes cb on every file in the sub directories of `base`, including
+    /// files inside of its subdirectories. Cb gets invoked with its
+    /// relative path to `base` and the file object.
+    pub fn for_each_file(
+        &self,
+        base: impl AsRef<Path>,
+        mut cb: impl FnMut(&Path, File<B>),
+    ) -> Pk2Result<()> {
+        let mut path = std::path::PathBuf::new();
+        let mut stack = vec![self.open_directory(base)?];
+        let mut first_iteration = true;
         while let Some(dir) = stack.pop() {
-            path.push(dir.name());
+            if !first_iteration {
+                path.push(dir.name());
+            } else {
+                first_iteration = false;
+            };
+            let mut files_only = true;
             for entry in dir.entries() {
                 match entry {
-                    self::fs::DirEntry::Directory(dir) => stack.push(dir),
+                    self::fs::DirEntry::Directory(dir) => {
+                        stack.push(dir);
+                        files_only = false;
+                    }
                     self::fs::DirEntry::File(file) => {
                         path.push(file.name());
                         cb(&path, file);
@@ -198,7 +206,9 @@ impl<B> Pk2<B> {
                     }
                 }
             }
-            path.pop();
+            if files_only {
+                path.pop();
+            }
         }
         Ok(())
     }
