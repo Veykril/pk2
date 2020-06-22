@@ -16,7 +16,7 @@ pub struct BlockManager {
 
 impl BlockManager {
     /// Parses the complete index of a pk2 file
-    pub fn new<F: io::Read + io::Seek>(bf: Option<&Blowfish>, mut file: F) -> Pk2Result<Self> {
+    pub fn new<F: io::Read + io::Seek>(bf: Option<&Blowfish>, mut stream: F) -> Pk2Result<Self> {
         let mut chains = HashMap::with_capacity_and_hasher(32, NoHashHasherBuilder);
         // used to prevent an infinite loop that can be caused by specific files
         let mut visited_block_set = HashSet::with_capacity_and_hasher(32, NoHashHasherBuilder);
@@ -27,7 +27,7 @@ impl BlockManager {
                 continue;
             }
             let block_chain =
-                Self::read_chain_from_file_at(&mut visited_block_set, bf, &mut file, offset)?;
+                Self::read_chain_from_stream_at(&mut visited_block_set, bf, &mut stream, offset)?;
             visited_block_set.clear();
 
             // put all folder offsets of this chain into the stack to parse them next
@@ -56,17 +56,17 @@ impl BlockManager {
     }
 
     /// Reads a [`PackBlockChain`] from the given file at the specified offset.
-    fn read_chain_from_file_at<F: io::Read + io::Seek>(
+    fn read_chain_from_stream_at<F: io::Read + io::Seek>(
         visited_block_set: &mut HashSet<BlockOffset, NoHashHasherBuilder>,
         bf: Option<&Blowfish>,
-        file: &mut F,
+        stream: &mut F,
         offset: ChainIndex,
     ) -> Pk2Result<PackBlockChain> {
         let mut blocks = Vec::new();
         let mut offset = offset.into();
 
         while visited_block_set.insert(offset) {
-            let block = crate::io::read_block_at(bf, &mut *file, offset)?;
+            let block = crate::io::read_block_at(bf, &mut *stream, offset)?;
             let nc = block.entries().last().and_then(PackEntry::next_block);
             blocks.push((offset, block));
             match nc {

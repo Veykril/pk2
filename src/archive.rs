@@ -20,7 +20,7 @@ use crate::raw::header::PackHeader;
 use crate::raw::{ChainIndex, StreamOffset};
 
 pub struct Pk2<B = stdfs::File> {
-    file: RefCell<B>,
+    stream: RefCell<B>,
     blowfish: Option<Blowfish>,
     block_manager: BlockManager,
 }
@@ -48,13 +48,13 @@ impl<B> Pk2<B>
 where
     B: io::Read + io::Seek,
 {
-    pub fn open_in<K: AsRef<[u8]>>(mut file: B, key: K) -> Pk2Result<Self> {
-        file.seek(io::SeekFrom::Start(0))?;
-        Self::_open_in_impl(file, key)
+    pub fn open_in<K: AsRef<[u8]>>(mut stream: B, key: K) -> Pk2Result<Self> {
+        stream.seek(io::SeekFrom::Start(0))?;
+        Self::_open_in_impl(stream, key)
     }
 
-    fn _open_in_impl<K: AsRef<[u8]>>(mut file: B, key: K) -> Pk2Result<Self> {
-        let header = PackHeader::from_reader(&mut file)?;
+    fn _open_in_impl<K: AsRef<[u8]>>(mut stream: B, key: K) -> Pk2Result<Self> {
+        let header = PackHeader::from_reader(&mut stream)?;
         header.validate_sig()?;
         let blowfish = if header.encrypted {
             let bf = Blowfish::new(key.as_ref())?;
@@ -65,10 +65,10 @@ where
         } else {
             None
         };
-        let block_manager = BlockManager::new(blowfish.as_ref(), &mut file)?;
+        let block_manager = BlockManager::new(blowfish.as_ref(), &mut stream)?;
 
         Ok(Pk2 {
-            file: RefCell::new(file),
+            stream: RefCell::new(stream),
             blowfish,
             block_manager,
         })
@@ -79,27 +79,32 @@ impl<B> Pk2<B>
 where
     B: io::Read + io::Write + io::Seek,
 {
-    pub fn create_new_in<K: AsRef<[u8]>>(mut file: B, key: K) -> Pk2Result<Self> {
-        file.seek(io::SeekFrom::Start(0))?;
-        Self::_create_impl(file, key)
+    pub fn create_new_in<K: AsRef<[u8]>>(mut stream: B, key: K) -> Pk2Result<Self> {
+        stream.seek(io::SeekFrom::Start(0))?;
+        Self::_create_impl(stream, key)
     }
 
-    fn _create_impl<K: AsRef<[u8]>>(file: B, key: K) -> Pk2Result<Self> {
-        let (header, mut file, blowfish) = if key.as_ref().is_empty() {
-            (PackHeader::default(), file, None)
+    fn _create_impl<K: AsRef<[u8]>>(stream: B, key: K) -> Pk2Result<Self> {
+        let (header, mut stream, blowfish) = if key.as_ref().is_empty() {
+            (PackHeader::default(), stream, None)
         } else {
             let bf = Blowfish::new(key.as_ref())?;
-            (PackHeader::new_encrypted(&bf), file, Some(bf))
+            (PackHeader::new_encrypted(&bf), stream, Some(bf))
         };
 
-        header.to_writer(&mut file)?;
+        header.to_writer(&mut stream)?;
         let mut block = PackBlock::default();
         block[0] = PackEntry::new_directory(PK2_CURRENT_DIR_IDENT, PK2_ROOT_BLOCK, None);
-        crate::io::write_block(blowfish.as_ref(), &mut file, PK2_ROOT_BLOCK.into(), &block)?;
+        crate::io::write_block(
+            blowfish.as_ref(),
+            &mut stream,
+            PK2_ROOT_BLOCK.into(),
+            &block,
+        )?;
 
-        let block_manager = BlockManager::new(blowfish.as_ref(), &mut file)?;
+        let block_manager = BlockManager::new(blowfish.as_ref(), &mut stream)?;
         Ok(Pk2 {
-            file: RefCell::new(file),
+            stream: RefCell::new(stream),
             blowfish,
             block_manager,
         })
@@ -236,7 +241,7 @@ where
 
         crate::io::write_chain_entry(
             self.blowfish.as_ref(),
-            &mut *self.file.borrow_mut(),
+            &mut *self.stream.borrow_mut(),
             self.get_chain(chain_index).unwrap(),
             entry_idx,
         )?;
@@ -253,7 +258,7 @@ where
         let (chain, entry_idx) = Self::create_entry_at(
             &mut self.block_manager,
             self.blowfish.as_ref(),
-            &mut *self.file.borrow_mut(),
+            &mut *self.stream.borrow_mut(),
             PK2_ROOT_BLOCK,
             path,
         )?;
@@ -269,7 +274,7 @@ where
     fn create_entry_at(
         block_manager: &mut BlockManager,
         blowfish: Option<&Blowfish>,
-        mut file: &mut B,
+        mut stream: &mut B,
         chain: ChainIndex,
         path: &Path,
     ) -> Pk2Result<(ChainIndex, usize)> {
@@ -287,13 +292,12 @@ where
                         idx
                     } else {
                         // current chain is full so create a new block and append it
-                        //current_chain.create_new_block(blowfish, &mut file)?
-                        let (offset, block) = allocate_empty_block(blowfish, &mut file)?;
+                        let (offset, block) = allocate_empty_block(blowfish, &mut stream)?;
                         let chain_entry_idx = current_chain.num_entries();
                         current_chain.push_and_link(offset, block);
                         write_chain_entry(
                             blowfish,
-                            &mut file,
+                            &mut stream,
                             &current_chain,
                             chain_entry_idx - 1,
                         )?;
@@ -305,7 +309,7 @@ where
                         let dir_name = p.to_str().ok_or(Error::NonUnicodePath)?;
                         let block_chain = allocate_new_block_chain(
                             blowfish,
-                            &mut file,
+                            &mut stream,
                             current_chain,
                             dir_name,
                             chain_entry_idx,

@@ -44,7 +44,7 @@ impl PackBlockChain {
 
     /// Returns the file offset of the entry at the given idx in this block
     /// chain.
-    pub fn file_offset_for_entry(&self, idx: usize) -> Option<EntryOffset> {
+    pub fn stream_offset_for_entry(&self, idx: usize) -> Option<EntryOffset> {
         self.blocks
             .get(idx / PK2_FILE_BLOCK_ENTRY_COUNT)
             .map(|(BlockOffset(offset), _)| {

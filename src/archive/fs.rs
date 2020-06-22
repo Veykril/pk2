@@ -78,7 +78,7 @@ where
         let rem_len = self.remaining_len();
         let len = buf.len().min(rem_len);
         let n = crate::io::read_at(
-            &mut *self.archive.file.borrow_mut(),
+            &mut *self.archive.stream.borrow_mut(),
             pos_data + StreamOffset(self.seek_pos),
             &mut buf[..len],
         )?;
@@ -96,7 +96,7 @@ where
             ))
         } else {
             crate::io::read_at(
-                &mut *self.archive.file.borrow_mut(),
+                &mut *self.archive.stream.borrow_mut(),
                 pos_data + StreamOffset(self.seek_pos),
                 &mut buf[..rem_len],
             )?;
@@ -196,7 +196,7 @@ where
         let size = self.entry().size();
         self.data.get_mut().resize(size as usize, 0);
         crate::io::read_exact_at(
-            &mut *self.archive.file.borrow_mut(),
+            &mut *self.archive.stream.borrow_mut(),
             pos_data,
             self.data.get_mut(),
         )
@@ -278,7 +278,7 @@ where
             .get_mut(self.chain)
             .expect("invalid chain");
         let entry_offset = chain
-            .file_offset_for_entry(self.entry_index)
+            .stream_offset_for_entry(self.entry_index)
             .expect("invalid entry");
 
         let entry = chain.get_mut(self.entry_index).expect("invalid entry");
@@ -286,21 +286,21 @@ where
             .as_file_mut()
             .expect("invalid file object, this is a bug");
 
-        let file = &mut *self.archive.file.borrow_mut();
+        let stream = &mut *self.archive.stream.borrow_mut();
         let data = &self.data.get_ref()[..];
         debug_assert!(data.len() <= !0u32 as usize);
         let data_len = data.len() as u32;
         // new unwritten file/more data than what fits, so use a new block
         if data_len > fentry.size {
             // FIXME reuse previous buffer somehow?
-            fentry.pos_data = crate::io::append_data(&mut *file, data)?;
+            fentry.pos_data = crate::io::append_data(&mut *stream, data)?;
         // data fits into the previous buffer space
         } else {
-            crate::io::write_data_at(&mut *file, fentry.pos_data, data)?;
+            crate::io::write_data_at(&mut *stream, fentry.pos_data, data)?;
         }
         fentry.size = data_len;
 
-        crate::io::write_entry_at(self.archive.blowfish.as_ref(), file, entry_offset, entry)
+        crate::io::write_entry_at(self.archive.blowfish.as_ref(), stream, entry_offset, entry)
     }
 }
 
