@@ -1,5 +1,5 @@
 #![allow(clippy::match_ref_pats)]
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -124,8 +124,6 @@ where
     entry_index: usize,
     data: Cursor<Vec<u8>>,
 }
-
-use std::io::Cursor;
 
 impl<'pk2, B> FileMut<'pk2, B>
 where
@@ -254,9 +252,19 @@ where
     B: Read + Write + Seek,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // FIXME: check that buf.len() doesnt exceed !0u32
         self.try_fetch_data()?;
-        self.data.write(buf)
+        let len = self.data.get_ref().len();
+        match len
+            .checked_add(buf.len())
+            .map(|new_len| new_len.checked_sub(u32::MAX as usize))
+        {
+            // data + buf < u32::MAX
+            Some(None) | Some(Some(0)) => self.data.write(buf),
+            // data + buf > u32::MAX, truncate buf
+            Some(Some(slice_overflow)) => self.data.write(&buf[..buf.len() - slice_overflow]),
+            // data + buf overflows usize::MAX
+            None => Ok(0),
+        }
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -308,19 +316,22 @@ where
 fn seek_impl(seek: SeekFrom, seek_pos: u64, size: u64) -> io::Result<u64> {
     let (base_pos, offset) = match seek {
         SeekFrom::Start(n) => {
-            return Ok(n.min(size));
+            return Ok(n);
         }
         SeekFrom::End(n) => (size, n),
         SeekFrom::Current(n) => (seek_pos, n),
     };
-    let new_pos = base_pos as i64 + offset;
-    if new_pos < 0 {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "invalid seek to a negative position",
-        ))
+    let new_pos = if offset >= 0 {
+        base_pos.checked_add(offset as u64)
     } else {
-        Ok(size.min(new_pos as u64))
+        base_pos.checked_sub((offset.wrapping_neg()) as u64)
+    };
+    match new_pos {
+        Some(n) => Ok(n),
+        None => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid seek to a negative or overflowing position",
+        )),
     }
 }
 
