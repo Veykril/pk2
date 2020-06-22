@@ -105,6 +105,11 @@ impl PackBlockChain {
             .and_then(|(_, block)| block.get_mut(entry % PK2_FILE_BLOCK_ENTRY_COUNT))
     }
 
+    #[inline]
+    pub fn contains_entry_index(&self, entry: usize) -> bool {
+        entry < self.blocks.len() * PK2_FILE_BLOCK_ENTRY_COUNT
+    }
+
     /// Looks up the `directory` name in this [`PackBlockChain`], returning the
     /// offset of the ['PackBlockChain'] corresponding to the directory if
     /// successful.

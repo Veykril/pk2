@@ -52,6 +52,11 @@ impl<'pk2, B> File<'pk2, B> {
             .and_then(PackEntry::as_file)
             .expect("invalid file object, this is a bug")
     }
+
+    #[inline]
+    fn remaining_len(&self) -> usize {
+        (self.entry().size() as u64 - self.seek_pos) as usize
+    }
 }
 
 impl<B> Seek for File<'_, B> {
@@ -83,23 +88,42 @@ where
     B: Read + Seek,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let StreamOffset(pos_data) = self.entry().pos_data();
-        let rem_len = (self.entry().size() as u64 - self.seek_pos) as usize;
-        let n = {
-            let mut file = self.archive.file.borrow_mut();
-            file.seek(SeekFrom::Start(pos_data + self.seek_pos as u64))?;
-            let len = buf.len().min(rem_len);
-            file.read(&mut buf[..len])?
-        };
+        let pos_data = self.entry().pos_data();
+        let rem_len = self.remaining_len();
+        let len = buf.len().min(rem_len);
+        let n = crate::io::read_at(
+            &mut *self.archive.file.borrow_mut(),
+            pos_data + StreamOffset(self.seek_pos),
+            &mut buf[..len],
+        )?;
         self.seek(SeekFrom::Current(n as i64))?;
         Ok(n)
     }
 
+    fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        let pos_data = self.entry().pos_data();
+        let rem_len = self.remaining_len();
+        if buf.len() < rem_len {
+            Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "failed to fill whole buffer",
+            ))
+        } else {
+            crate::io::read_at(
+                &mut *self.archive.file.borrow_mut(),
+                pos_data + StreamOffset(self.seek_pos),
+                &mut buf[..rem_len],
+            )?;
+            self.seek_pos += rem_len as u64;
+            Ok(())
+        }
+    }
+
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
         let len = buf.len();
-        let size = self.entry().size() as usize;
-        buf.resize(len + size as usize, 0);
-        self.read(&mut buf[len..])
+        let rem_len = self.remaining_len();
+        buf.resize(len + rem_len, 0);
+        self.read_exact(&mut buf[len..]).map(|()| rem_len)
     }
 }
 
@@ -187,7 +211,7 @@ where
         let pos_data = self.entry().pos_data();
         let size = self.entry().size();
         self.data.resize(size as usize, 0);
-        crate::io::read_data_at(
+        crate::io::read_exact_at(
             &mut *self.archive.file.borrow_mut(),
             pos_data,
             &mut self.data,

@@ -26,14 +26,22 @@ pub fn read_block_at<F: io::Seek + io::Read>(
     PackBlock::from_reader(&buf[..])
 }
 
-pub fn read_data_at<F: io::Seek + io::Read>(
+pub fn read_exact_at<F: io::Seek + io::Read>(
     mut file: F,
     StreamOffset(offset): StreamOffset,
     buf: &mut [u8],
 ) -> io::Result<()> {
     file.seek(SeekFrom::Start(offset))?;
-    file.read_exact(buf)?;
-    Ok(())
+    file.read_exact(buf)
+}
+
+pub fn read_at<F: io::Seek + io::Read>(
+    mut file: F,
+    StreamOffset(offset): StreamOffset,
+    buf: &mut [u8],
+) -> io::Result<usize> {
+    file.seek(SeekFrom::Start(offset))?;
+    file.read(buf)
 }
 
 #[inline]
@@ -73,12 +81,14 @@ pub fn write_entry_at<F: io::Seek + io::Write>(
 
 /// Write/Update a chain's entry at the given chain offset and entry index in
 /// the file.
+#[inline]
 pub fn write_chain_entry<F: io::Seek + io::Write>(
     bf: Option<&Blowfish>,
     file: F,
     chain: &PackBlockChain,
     entry_index: usize,
 ) -> io::Result<()> {
+    debug_assert!(chain.contains_entry_index(entry_index));
     write_entry_at(
         bf,
         file,
@@ -108,7 +118,8 @@ pub fn write_data_buffer_at<F: io::Seek + io::Write>(
     file.write_all(data)
 }
 
-/// Create a new [`PackBlockChain`] at the end of the buffer.
+/// Create a new [`PackBlockChain`] at the end of the buffer and update the
+/// corresponding entry in the chain.
 pub fn allocate_new_block_chain<F: io::Seek + io::Write>(
     blowfish: Option<&Blowfish>,
     mut file: F,
@@ -116,22 +127,22 @@ pub fn allocate_new_block_chain<F: io::Seek + io::Write>(
     dir_name: &str,
     chain_entry_idx: usize,
 ) -> Pk2Result<PackBlockChain> {
+    debug_assert!(current_chain.contains_entry_index(chain_entry_idx));
     let new_chain_offset = stream_len(&mut file).map(ChainIndex)?;
 
-    current_chain
-        .get_mut(chain_entry_idx)
-        .map(|entry| {
-            *entry = PackEntry::new_directory(dir_name, new_chain_offset, entry.next_block())
-        })
-        .expect("missing chain, this is a bug");
+    let entry = &mut current_chain[chain_entry_idx];
+    debug_assert!(entry.is_empty());
+    *entry = PackEntry::new_directory(dir_name, new_chain_offset, entry.next_block());
 
-    let offset = current_chain
-        .file_offset_for_entry(chain_entry_idx)
-        .unwrap();
     let mut block = PackBlock::default();
     block[0] = PackEntry::new_directory(PK2_CURRENT_DIR_IDENT, new_chain_offset, None);
     block[1] = PackEntry::new_directory(PK2_PARENT_DIR_IDENT, current_chain.chain_index(), None);
     write_block(blowfish, &mut file, new_chain_offset.into(), &block)?;
+
+    let offset = current_chain
+        .file_offset_for_entry(chain_entry_idx)
+        .unwrap();
+
     write_entry_at(blowfish, file, offset, &current_chain[chain_entry_idx])?;
     Ok(PackBlockChain::from_blocks(vec![(
         new_chain_offset.into(),
