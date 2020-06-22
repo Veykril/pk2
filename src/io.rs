@@ -1,4 +1,8 @@
-use std::io;
+#![allow(clippy::option_map_unit_fn)]
+
+//! General io for reading/writing from/to buffers.
+
+use std::io::{self, SeekFrom};
 
 use crate::constants::{
     PK2_CURRENT_DIR_IDENT, PK2_FILE_BLOCK_SIZE, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DIR_IDENT,
@@ -9,31 +13,24 @@ use crate::raw::entry::PackEntry;
 use crate::raw::{BlockOffset, ChainIndex, EntryOffset};
 use crate::Blowfish;
 
+/// Read a block at a given offset.
 pub fn read_block_at<F: io::Seek + io::Read>(
     bf: Option<&Blowfish>,
     mut file: F,
     BlockOffset(offset): BlockOffset,
 ) -> Pk2Result<PackBlock> {
     let mut buf = [0; PK2_FILE_BLOCK_SIZE];
-    file.seek(io::SeekFrom::Start(offset))?;
+    file.seek(SeekFrom::Start(offset))?;
     file.read_exact(&mut buf)?;
     bf.map(|bf| bf.decrypt(&mut buf));
     PackBlock::from_reader(&buf[..])
 }
 
-pub fn file_len<F: io::Seek>(mut file: F) -> io::Result<u64> {
-    file.seek(io::SeekFrom::End(0))
+fn stream_len<F: io::Seek>(mut file: F) -> io::Result<u64> {
+    file.seek(SeekFrom::End(0))
 }
 
-pub fn allocate_empty_block<F: io::Seek + io::Write>(
-    bf: Option<&Blowfish>,
-    mut file: F,
-) -> Pk2Result<(BlockOffset, PackBlock)> {
-    let offset = file_len(&mut file).map(crate::raw::BlockOffset)?;
-    let block = PackBlock::default();
-    write_block(bf, file, offset, &block).map(|_| (offset, block))
-}
-
+/// Write/Update a block at the given block offset in the file.
 pub fn write_block<F: io::Seek + io::Write>(
     bf: Option<&Blowfish>,
     mut file: F,
@@ -43,11 +40,12 @@ pub fn write_block<F: io::Seek + io::Write>(
     let mut buf = [0; PK2_FILE_BLOCK_SIZE];
     block.to_writer(&mut buf[..])?;
     bf.map(|bf| bf.encrypt(&mut buf));
-    file.seek(io::SeekFrom::Start(offset))?;
+    file.seek(SeekFrom::Start(offset))?;
     file.write_all(&buf)?;
     Ok(())
 }
 
+/// Write/Update an entry at the given entry offset in the file.
 pub fn write_entry_at<F: io::Seek + io::Write>(
     bf: Option<&Blowfish>,
     mut file: F,
@@ -57,11 +55,13 @@ pub fn write_entry_at<F: io::Seek + io::Write>(
     let mut buf = [0; PK2_FILE_ENTRY_SIZE];
     entry.to_writer(&mut buf[..])?;
     bf.map(|bf| bf.encrypt(&mut buf));
-    file.seek(io::SeekFrom::Start(offset))?;
+    file.seek(SeekFrom::Start(offset))?;
     file.write_all(&buf)?;
     Ok(())
 }
 
+/// Write/Update a chain's entry at the given chain offset and entry index in
+/// the file.
 pub fn write_chain_entry<F: io::Seek + io::Write>(
     bf: Option<&Blowfish>,
     file: F,
@@ -79,20 +79,22 @@ pub fn write_chain_entry<F: io::Seek + io::Write>(
 /// Write data to the end of the file returning the offset of the written
 /// data in the file.
 pub fn write_new_data_buffer<F: io::Seek + io::Write>(mut file: F, data: &[u8]) -> io::Result<u64> {
-    let file_end = file.seek(io::SeekFrom::End(0))?;
+    let file_end = file.seek(SeekFrom::End(0))?;
     file.write_all(data)?;
     Ok(file_end)
 }
 
+/// Write raw data at the given offset into the buffer.
 pub fn write_data_buffer_at<F: io::Seek + io::Write>(
     mut file: F,
     offset: u64,
     data: &[u8],
 ) -> io::Result<()> {
-    file.seek(io::SeekFrom::Start(offset))?;
+    file.seek(SeekFrom::Start(offset))?;
     file.write_all(data)
 }
 
+/// Create a new [`PackBlockChain`] at the end of the buffer.
 pub fn allocate_new_block_chain<F: io::Seek + io::Write>(
     blowfish: Option<&Blowfish>,
     mut file: F,
@@ -100,7 +102,7 @@ pub fn allocate_new_block_chain<F: io::Seek + io::Write>(
     dir_name: &str,
     chain_entry_idx: usize,
 ) -> Pk2Result<PackBlockChain> {
-    let new_chain_offset = crate::io::file_len(&mut file).map(ChainIndex)?;
+    let new_chain_offset = stream_len(&mut file).map(ChainIndex)?;
     let entry = &mut current_chain[chain_entry_idx];
     *entry = PackEntry::new_directory(dir_name, new_chain_offset, entry.next_block());
     let offset = current_chain
@@ -115,6 +117,16 @@ pub fn allocate_new_block_chain<F: io::Seek + io::Write>(
         new_chain_offset.into(),
         block,
     )]))
+}
+
+/// Create a new empty [`PackBlock`] at the end of the buffer.
+pub fn allocate_empty_block<F: io::Seek + io::Write>(
+    bf: Option<&Blowfish>,
+    mut file: F,
+) -> Pk2Result<(BlockOffset, PackBlock)> {
+    let offset = stream_len(&mut file).map(crate::raw::BlockOffset)?;
+    let block = PackBlock::default();
+    write_block(bf, file, offset, &block).map(|_| (offset, block))
 }
 
 pub trait RawIo: Sized {
