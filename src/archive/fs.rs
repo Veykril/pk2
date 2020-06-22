@@ -60,26 +60,12 @@ impl<'pk2, B> File<'pk2, B> {
 }
 
 impl<B> Seek for File<'_, B> {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+    fn seek(&mut self, seek: SeekFrom) -> io::Result<u64> {
         let size = self.entry().size() as u64;
-        let (base_pos, offset) = match pos {
-            SeekFrom::Start(n) => {
-                self.seek_pos = n.min(size);
-                return Ok(self.seek_pos);
-            }
-            SeekFrom::End(n) => (size, n),
-            SeekFrom::Current(n) => (self.seek_pos, n),
-        };
-        let new_pos = base_pos as i64 + offset;
-        if new_pos < 0 {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid seek to a negative position",
-            ))
-        } else {
-            self.seek_pos = size.min(new_pos as u64);
-            Ok(self.seek_pos)
-        }
+        seek_impl(seek, self.seek_pos, size).map(|new_pos| {
+            self.seek_pos = new_pos;
+            new_pos
+        })
     }
 }
 
@@ -217,32 +203,23 @@ where
             &mut self.data,
         )
     }
+
+    #[inline]
+    fn remaining_len(&self) -> usize {
+        (self.entry().size() as u64 - self.seek_pos) as usize
+    }
 }
 
 impl<B> Seek for FileMut<'_, B>
 where
     B: Read + Write + Seek,
 {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+    fn seek(&mut self, seek: SeekFrom) -> io::Result<u64> {
         let size = self.data.len().max(self.entry().size() as usize) as u64;
-        let (base_pos, offset) = match pos {
-            SeekFrom::Start(n) => {
-                self.seek_pos = n.min(size);
-                return Ok(self.seek_pos);
-            }
-            SeekFrom::End(n) => (size, n),
-            SeekFrom::Current(n) => (self.seek_pos, n),
-        };
-        let new_pos = base_pos as i64 + offset;
-        if new_pos < 0 {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid seek to a negative position",
-            ))
-        } else {
-            self.seek_pos = size.min(new_pos as u64);
-            Ok(self.seek_pos)
-        }
+        seek_impl(seek, self.seek_pos, size).map(|new_pos| {
+            self.seek_pos = new_pos;
+            new_pos
+        })
     }
 }
 
@@ -363,6 +340,25 @@ where
 {
     fn drop(&mut self) {
         let _ = self.flush();
+    }
+}
+
+fn seek_impl(seek: SeekFrom, seek_pos: u64, size: u64) -> io::Result<u64> {
+    let (base_pos, offset) = match seek {
+        SeekFrom::Start(n) => {
+            return Ok(n.min(size));
+        }
+        SeekFrom::End(n) => (size, n),
+        SeekFrom::Current(n) => (seek_pos, n),
+    };
+    let new_pos = base_pos as i64 + offset;
+    if new_pos < 0 {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid seek to a negative position",
+        ))
+    } else {
+        Ok(size.min(new_pos as u64))
     }
 }
 
