@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Component, Path};
 
@@ -18,13 +18,18 @@ impl BlockManager {
     /// Parses the complete index of a pk2 file
     pub fn new<F: io::Read + io::Seek>(bf: Option<&Blowfish>, mut file: F) -> Pk2Result<Self> {
         let mut chains = HashMap::with_capacity_and_hasher(32, NoHashHasherBuilder);
+        // used to prevent an infinite loop that can be caused by specific files
+        let mut visited_block_set = HashSet::with_capacity_and_hasher(32, NoHashHasherBuilder);
         let mut offsets = vec![PK2_ROOT_BLOCK];
         while let Some(offset) = offsets.pop() {
             if chains.contains_key(&offset) {
                 // skip offsets that are being pointed to multiple times
                 continue;
             }
-            let block_chain = Self::read_chain_from_file_at(bf, &mut file, offset)?;
+            let block_chain =
+                Self::read_chain_from_file_at(&mut visited_block_set, bf, &mut file, offset)?;
+            visited_block_set.clear();
+
             // put all folder offsets of this chain into the stack to parse them next
             offsets.extend(
                 block_chain
@@ -51,24 +56,25 @@ impl BlockManager {
     }
 
     /// Reads a [`PackBlockChain`] from the given file at the specified offset.
-    /// Note: FIXME Can potentially end up in a neverending loop with a
-    /// specially crafted file.
     fn read_chain_from_file_at<F: io::Read + io::Seek>(
+        visited_block_set: &mut HashSet<BlockOffset, NoHashHasherBuilder>,
         bf: Option<&Blowfish>,
         file: &mut F,
         offset: ChainIndex,
     ) -> Pk2Result<PackBlockChain> {
         let mut blocks = Vec::new();
         let mut offset = offset.into();
-        loop {
+
+        while visited_block_set.insert(offset) {
             let block = crate::io::read_block_at(bf, &mut *file, offset)?;
             let nc = block.entries().last().and_then(PackEntry::next_block);
             blocks.push((offset, block));
             match nc {
                 Some(nc) => offset = BlockOffset(nc.get()),
-                None => break Ok(PackBlockChain::from_blocks(blocks)),
+                None => break,
             }
         }
+        Ok(PackBlockChain::from_blocks(blocks))
     }
 
     #[inline]

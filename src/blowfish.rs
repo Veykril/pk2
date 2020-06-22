@@ -6,8 +6,6 @@ use byteorder::{ByteOrder, LE};
 use crate::constants::PK2_SALT;
 use crate::error::{Error, Pk2Result};
 
-// Wrapper around the blowfish crates implementation cause it requires
-// mutability without mutating state. This simplifies our implementation A LOT.
 pub struct Blowfish {
     s: [[u32; 256]; 4],
     p: [u32; 18],
