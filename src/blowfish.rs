@@ -87,6 +87,7 @@ impl Blowfish {
         }
     }
 
+    #[allow(clippy::many_single_char_names)]
     fn round_function(&self, x: u32) -> u32 {
         let x = x as usize;
         let a = self.s[0][x >> 24];

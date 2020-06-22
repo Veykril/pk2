@@ -70,7 +70,7 @@ fn extract(matches: &ArgMatches<'static>) {
         .unwrap_or_else(|| archive_path.with_extension(""));
     let write_times = matches.is_present("time");
     let archive = archive::Pk2::open(archive_path, key)
-        .expect(&format!("failed to open archive at {:?}", archive_path));
+        .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
     let folder = archive.open_directory("/").unwrap();
     println!("Extracting {:?} to {:?}.", archive_path, out_path);
     extract_files(folder, &out_path, write_times);
@@ -149,7 +149,7 @@ fn repack(matches: &ArgMatches<'static>) {
     let key = matches.value_of("key").unwrap().as_bytes();
     let packkey = matches
         .value_of("packkey")
-        .or(matches.value_of("key"))
+        .or_else(|| matches.value_of("key"))
         .unwrap()
         .as_bytes();
     let archive_path = matches.value_of_os("archive").map(Path::new).unwrap();
@@ -158,10 +158,9 @@ fn repack(matches: &ArgMatches<'static>) {
         .map(PathBuf::from)
         .unwrap_or_else(|| archive_path.with_extension("repack.pk2"));
     let in_archive = pk2::archive::Pk2::open(archive_path, key)
-        .expect(&format!("failed to open archive at {:?}", archive_path));
-    let mut out_archive = pk2::archive::Pk2::create_new(&out_archive_path, packkey).expect(
-        &format!("failed to create archive at {:?}", out_archive_path),
-    );
+        .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
+    let mut out_archive = pk2::archive::Pk2::create_new(&out_archive_path, packkey)
+        .unwrap_or_else(|_| panic!("failed to create archive at {:?}", out_archive_path));
     let folder = in_archive.open_directory("/").unwrap();
     println!("Repacking {:?} into {:?}.", archive_path, out_archive_path);
     repack_files(&mut out_archive, folder, "/".as_ref());
@@ -227,10 +226,8 @@ fn pack(matches: &ArgMatches<'static>) {
     if !input_path.is_dir() {
         return;
     }
-    let mut out_archive = archive::Pk2::create_new(&out_archive_path, key).expect(&format!(
-        "failed to create archive at {:?}",
-        out_archive_path
-    ));
+    let mut out_archive = archive::Pk2::create_new(&out_archive_path, key)
+        .unwrap_or_else(|_| panic!("failed to create archive at {:?}", out_archive_path));
     println!("Packing {:?} into {:?}.", input_path, out_archive_path);
     pack_files(&mut out_archive, input_path, input_path);
 }
@@ -290,7 +287,7 @@ fn list(matches: &ArgMatches<'static>) {
     let key = matches.value_of("key").unwrap().as_bytes();
     let archive_path = matches.value_of_os("archive").map(PathBuf::from).unwrap();
     let archive = archive::Pk2::open(&archive_path, key)
-        .expect(&format!("failed to open archive at {:?}", archive_path));
+        .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
     let folder = archive.open_directory("/").unwrap();
     list_files(folder, "/".as_ref(), 1);
 }
