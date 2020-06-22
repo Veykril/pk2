@@ -44,6 +44,12 @@ impl Pk2<stdfs::File> {
     }
 }
 
+impl Pk2<io::Cursor<Vec<u8>>> {
+    pub fn create_new_in_memory<K: AsRef<[u8]>>(key: K) -> Pk2Result<Self> {
+        Self::_create_impl(io::Cursor::new(Vec::with_capacity(4096)), key)
+    }
+}
+
 impl<B> Pk2<B>
 where
     B: io::Read + io::Seek,
