@@ -7,7 +7,7 @@ use crate::archive::Pk2;
 use crate::error::{Error, Pk2Result};
 use crate::raw::block_chain::PackBlockChain;
 use crate::raw::entry::{DirectoryEntry, FileEntry, PackEntry};
-use crate::raw::ChainIndex;
+use crate::raw::{ChainIndex, StreamOffset};
 
 pub struct File<'pk2, B = std::fs::File> {
     archive: &'pk2 Pk2<B>,
@@ -83,12 +83,12 @@ where
     B: Read + Seek,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let pos_data = self.entry().pos_data();
-        let size = self.entry().size();
+        let StreamOffset(pos_data) = self.entry().pos_data();
+        let rem_len = (self.entry().size() as u64 - self.seek_pos) as usize;
         let n = {
             let mut file = self.archive.file.borrow_mut();
             file.seek(SeekFrom::Start(pos_data + self.seek_pos as u64))?;
-            let len = buf.len().min((size as u64 - self.seek_pos) as usize);
+            let len = buf.len().min(rem_len);
             file.read(&mut buf[..len])?
         };
         self.seek(SeekFrom::Current(n as i64))?;
@@ -187,10 +187,11 @@ where
         let pos_data = self.entry().pos_data();
         let size = self.entry().size();
         self.data.resize(size as usize, 0);
-        let mut file = self.archive.file.borrow_mut();
-        file.seek(SeekFrom::Start(pos_data as u64))?;
-        file.read_exact(&mut self.data)?;
-        Ok(())
+        crate::io::read_data_at(
+            &mut *self.archive.file.borrow_mut(),
+            pos_data,
+            &mut self.data,
+        )
     }
 }
 

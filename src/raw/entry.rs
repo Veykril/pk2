@@ -4,7 +4,7 @@ use std::io::{Read, Result as IoResult, Write};
 use std::num::NonZeroU64;
 use std::time::SystemTime;
 
-use super::{BlockOffset, ChainIndex};
+use super::{BlockOffset, ChainIndex, StreamOffset};
 use crate::constants::{PK2_CURRENT_DIR_IDENT, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DIR_IDENT};
 use crate::error::{Error, Pk2Result};
 use crate::io::RawIo;
@@ -94,7 +94,7 @@ pub struct FileEntry {
     pub(crate) access_time: FILETIME,
     pub(crate) create_time: FILETIME,
     pub(crate) modify_time: FILETIME,
-    pub(crate) pos_data: u64,
+    pub(crate) pos_data: StreamOffset,
     pub(crate) size: u32,
     next_block: Option<NonZeroU64>,
 }
@@ -102,7 +102,7 @@ pub struct FileEntry {
 impl FileEntry {
     pub(crate) fn new(
         name: String,
-        pos_data: u64,
+        pos_data: StreamOffset,
         size: u32,
         next_block: Option<NonZeroU64>,
     ) -> Self {
@@ -136,7 +136,7 @@ impl FileEntry {
     }
 
     #[inline]
-    pub fn pos_data(&self) -> u64 {
+    pub fn pos_data(&self) -> StreamOffset {
         self.pos_data
     }
 
@@ -176,7 +176,7 @@ impl PackEntry {
 
     pub fn new_file(
         name: impl Into<String>,
-        pos_data: u64,
+        pos_data: StreamOffset,
         size: u32,
         next_block: Option<NonZeroU64>,
     ) -> Self {
@@ -348,7 +348,7 @@ impl RawIo for PackEntry {
                         access_time,
                         create_time,
                         modify_time,
-                        pos_data: position,
+                        pos_data: StreamOffset(position),
                         size,
                         next_block,
                     })
@@ -381,7 +381,7 @@ impl RawIo for PackEntry {
                 access_time,
                 create_time,
                 modify_time,
-                pos_data: position,
+                pos_data: StreamOffset(position),
                 next_block,
                 ..
             }) => {

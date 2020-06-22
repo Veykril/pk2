@@ -10,7 +10,7 @@ use crate::constants::{
 use crate::error::Pk2Result;
 use crate::raw::block_chain::{PackBlock, PackBlockChain};
 use crate::raw::entry::PackEntry;
-use crate::raw::{BlockOffset, ChainIndex, EntryOffset};
+use crate::raw::{BlockOffset, ChainIndex, EntryOffset, StreamOffset};
 use crate::Blowfish;
 
 /// Read a block at a given offset.
@@ -26,6 +26,17 @@ pub fn read_block_at<F: io::Seek + io::Read>(
     PackBlock::from_reader(&buf[..])
 }
 
+pub fn read_data_at<F: io::Seek + io::Read>(
+    mut file: F,
+    StreamOffset(offset): StreamOffset,
+    buf: &mut [u8],
+) -> io::Result<()> {
+    file.seek(SeekFrom::Start(offset))?;
+    file.read_exact(buf)?;
+    Ok(())
+}
+
+#[inline]
 fn stream_len<F: io::Seek>(mut file: F) -> io::Result<u64> {
     file.seek(SeekFrom::End(0))
 }
@@ -78,16 +89,19 @@ pub fn write_chain_entry<F: io::Seek + io::Write>(
 
 /// Write data to the end of the file returning the offset of the written
 /// data in the file.
-pub fn write_new_data_buffer<F: io::Seek + io::Write>(mut file: F, data: &[u8]) -> io::Result<u64> {
-    let file_end = file.seek(SeekFrom::End(0))?;
-    file.write_all(data)?;
-    Ok(file_end)
+pub fn write_new_data_buffer<F: io::Seek + io::Write>(
+    mut stream: F,
+    data: &[u8],
+) -> io::Result<StreamOffset> {
+    let stream_end = stream_len(&mut stream)?;
+    stream.write_all(data)?;
+    Ok(StreamOffset(stream_end))
 }
 
 /// Write raw data at the given offset into the buffer.
 pub fn write_data_buffer_at<F: io::Seek + io::Write>(
     mut file: F,
-    offset: u64,
+    StreamOffset(offset): StreamOffset,
     data: &[u8],
 ) -> io::Result<()> {
     file.seek(SeekFrom::Start(offset))?;
@@ -103,8 +117,14 @@ pub fn allocate_new_block_chain<F: io::Seek + io::Write>(
     chain_entry_idx: usize,
 ) -> Pk2Result<PackBlockChain> {
     let new_chain_offset = stream_len(&mut file).map(ChainIndex)?;
-    let entry = &mut current_chain[chain_entry_idx];
-    *entry = PackEntry::new_directory(dir_name, new_chain_offset, entry.next_block());
+
+    current_chain
+        .get_mut(chain_entry_idx)
+        .map(|entry| {
+            *entry = PackEntry::new_directory(dir_name, new_chain_offset, entry.next_block())
+        })
+        .expect("missing chain, this is a bug");
+
     let offset = current_chain
         .file_offset_for_entry(chain_entry_idx)
         .unwrap();
@@ -124,9 +144,9 @@ pub fn allocate_empty_block<F: io::Seek + io::Write>(
     bf: Option<&Blowfish>,
     mut file: F,
 ) -> Pk2Result<(BlockOffset, PackBlock)> {
-    let offset = stream_len(&mut file).map(crate::raw::BlockOffset)?;
+    let offset = stream_len(&mut file).map(BlockOffset)?;
     let block = PackBlock::default();
-    write_block(bf, file, offset, &block).map(|_| (offset, block))
+    write_block(bf, file, offset, &block).and(Ok((offset, block)))
 }
 
 pub trait RawIo: Sized {

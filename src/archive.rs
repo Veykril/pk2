@@ -17,7 +17,7 @@ use crate::raw::block_chain::{PackBlock, PackBlockChain};
 use crate::raw::block_manager::BlockManager;
 use crate::raw::entry::*;
 use crate::raw::header::PackHeader;
-use crate::raw::ChainIndex;
+use crate::raw::{ChainIndex, StreamOffset};
 
 pub struct Pk2<B = stdfs::File> {
     file: RefCell<B>,
@@ -258,7 +258,7 @@ where
             path,
         )?;
         let entry = self.get_entry_mut(chain, entry_idx).unwrap();
-        *entry = PackEntry::new_file(file_name, 0, 0, entry.next_block());
+        *entry = PackEntry::new_file(file_name, StreamOffset(0), 0, entry.next_block());
         Ok(FileMut::new(self, chain, entry_idx))
     }
 
