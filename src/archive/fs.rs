@@ -50,7 +50,7 @@ impl<'pk2, B> File<'pk2, B> {
         self.archive
             .get_entry(self.chain, self.entry_index)
             .and_then(PackEntry::as_file)
-            .expect("invalid file object, this is a bug")
+            .expect("invalid file object")
     }
 
     #[inline]
@@ -122,9 +122,10 @@ where
     chain: ChainIndex,
     // the index of this file in the chain
     entry_index: usize,
-    seek_pos: u64,
-    data: Vec<u8>,
+    data: Cursor<Vec<u8>>,
 }
+
+use std::io::Cursor;
 
 impl<'pk2, B> FileMut<'pk2, B>
 where
@@ -135,8 +136,7 @@ where
             archive,
             chain,
             entry_index,
-            seek_pos: 0,
-            data: Vec::new(),
+            data: Cursor::new(Vec::new()),
         }
     }
 
@@ -182,7 +182,7 @@ where
         self.archive
             .get_entry(self.chain, self.entry_index)
             .and_then(PackEntry::as_file)
-            .expect("invalid file object, this is a bug")
+            .expect("invalid file object")
     }
 
     #[inline]
@@ -190,23 +190,27 @@ where
         self.archive
             .get_entry_mut(self.chain, self.entry_index)
             .and_then(PackEntry::as_file_mut)
-            .expect("invalid file object, this is a bug")
+            .expect("invalid file object")
     }
 
     fn fetch_data(&mut self) -> io::Result<()> {
         let pos_data = self.entry().pos_data();
         let size = self.entry().size();
-        self.data.resize(size as usize, 0);
+        self.data.get_mut().resize(size as usize, 0);
         crate::io::read_exact_at(
             &mut *self.archive.file.borrow_mut(),
             pos_data,
-            &mut self.data,
+            self.data.get_mut(),
         )
     }
 
     #[inline]
-    fn remaining_len(&self) -> usize {
-        (self.entry().size() as u64 - self.seek_pos) as usize
+    fn try_fetch_data(&mut self) -> io::Result<()> {
+        if self.data.get_ref().is_empty() && self.entry().size() > 0 {
+            self.fetch_data()
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -215,9 +219,9 @@ where
     B: Read + Write + Seek,
 {
     fn seek(&mut self, seek: SeekFrom) -> io::Result<u64> {
-        let size = self.data.len().max(self.entry().size() as usize) as u64;
-        seek_impl(seek, self.seek_pos, size).map(|new_pos| {
-            self.seek_pos = new_pos;
+        let size = self.data.get_ref().len().max(self.entry().size() as usize) as u64;
+        seek_impl(seek, self.data.position(), size).map(|new_pos| {
+            self.data.set_position(new_pos);
             new_pos
         })
     }
@@ -228,29 +232,20 @@ where
     B: Read + Write + Seek,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if buf.is_empty() {
-            Ok(0)
-        // we've got the data in our buffer so read it from there
-        } else if !self.data.is_empty() {
-            let seek_pos = self.seek_pos as usize;
-            let len = buf.len().min(self.data.len() - seek_pos);
-            buf[..len].copy_from_slice(&self.data[seek_pos..][..len]);
-            self.seek(SeekFrom::Current(len as i64))?;
-            Ok(len)
-        // we dont have the data yet so fetch it then read again
-        } else if self.entry().size() > 0 {
-            self.fetch_data()?;
-            self.read(buf)
-        } else {
-            Ok(0)
-        }
+        self.try_fetch_data()?;
+        self.data.read(buf)
+    }
+
+    fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        self.try_fetch_data()?;
+        self.data.read_exact(buf)
     }
 
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
         let len = buf.len();
-        let size = self.data.len().max(self.entry().size() as usize);
+        let size = self.data.get_ref().len().max(self.entry().size() as usize);
         buf.resize(len + size as usize, 0);
-        self.read(&mut buf[len..])
+        self.read_exact(&mut buf[len..]).map(|()| size)
     }
 }
 
@@ -259,78 +254,45 @@ where
     B: Read + Write + Seek,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let size = self.entry().size();
-        if !self.data.is_empty() {
-            let data_len = self.data.len();
-            let seek_pos = self.seek_pos as usize;
-
-            if let Some(slice) = self.data.get_mut(seek_pos..seek_pos + buf.len()) {
-                slice.copy_from_slice(buf);
-            } else {
-                let (copy, extend) = buf.split_at(data_len - seek_pos);
-                self.data[seek_pos..].copy_from_slice(copy);
-                self.data.extend_from_slice(extend);
-            }
-            self.seek(SeekFrom::Current(buf.len() as i64))?;
-            Ok(buf.len())
-        } else if size > 0 {
-            self.fetch_data()?;
-            self.write(buf)
-        } else {
-            self.data.write(buf)
-        }
+        // FIXME: check that buf.len() doesnt exceed !0u32
+        self.try_fetch_data()?;
+        self.data.write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        if !self.data.is_empty() {
-            let (file_data_pos, file_data_size) = {
-                let entry_index = self.entry_index;
-                // cant use `entry_mut` since this would borrow self for the whole scope
-                match self
-                    .archive
-                    .block_manager
-                    .get_mut(self.chain)
-                    .and_then(|chain| chain.get_mut(entry_index))
-                    .and_then(PackEntry::as_file_mut)
-                {
-                    Some(FileEntry { pos_data, size, .. }) => (pos_data, size),
-                    None => panic!("invalid file object, this is a bug"),
-                }
-            };
-            // new unwritten file/more data than what fits, so use a new block
-            if self.data.len() > *file_data_size as usize {
-                *file_data_pos = crate::io::write_new_data_buffer(
-                    &mut *self.archive.file.borrow_mut(),
-                    &self.data,
-                )?;
-                *file_data_size = self.data.len() as u32;
-            // we got data to write that is not bigger than the block we have
-            } else {
-                crate::io::write_data_buffer_at(
-                    &mut *self.archive.file.borrow_mut(),
-                    *file_data_pos,
-                    &self.data,
-                )?;
-                *file_data_size = self.data.len() as u32;
-            }
-            // update entry
-            let entry_offset = self
-                .archive
-                .get_chain(self.chain)
-                .and_then(|chain| chain.file_offset_for_entry(self.entry_index))
-                .unwrap();
-            self.set_modify_time(SystemTime::now());
-            crate::io::write_entry_at(
-                self.archive.blowfish.as_ref(),
-                &mut *self.archive.file.borrow_mut(),
-                entry_offset,
-                self.archive
-                    .get_entry(self.chain, self.entry_index)
-                    .unwrap(),
-            )
-        } else {
-            Ok(())
+        if self.data.get_ref().is_empty() {
+            return Ok(()); // nothing to write
         }
+        self.set_modify_time(SystemTime::now());
+        let chain = self
+            .archive
+            .block_manager
+            .get_mut(self.chain)
+            .expect("invalid chain");
+        let entry_offset = chain
+            .file_offset_for_entry(self.entry_index)
+            .expect("invalid entry");
+
+        let entry = chain.get_mut(self.entry_index).expect("invalid entry");
+        let fentry = entry
+            .as_file_mut()
+            .expect("invalid file object, this is a bug");
+
+        let file = &mut *self.archive.file.borrow_mut();
+        let data = &self.data.get_ref()[..];
+        debug_assert!(data.len() <= !0u32 as usize);
+        let data_len = data.len() as u32;
+        // new unwritten file/more data than what fits, so use a new block
+        if data_len > fentry.size {
+            // FIXME reuse previous buffer somehow?
+            fentry.pos_data = crate::io::append_data(&mut *file, data)?;
+        // data fits into the previous buffer space
+        } else {
+            crate::io::write_data_at(&mut *file, fentry.pos_data, data)?;
+        }
+        fentry.size = data_len;
+
+        crate::io::write_entry_at(self.archive.blowfish.as_ref(), file, entry_offset, entry)
     }
 }
 
@@ -408,15 +370,13 @@ impl<'pk2, B> Directory<'pk2, B> {
         self.archive
             .get_entry(self.chain, self.entry_index)
             .and_then(PackEntry::as_directory)
-            .expect("invalid file object, this is a bug")
+            .expect("invalid file object")
     }
 
     // returns the chain this folder represents
     #[inline]
     fn dir_chain(&self, chain: ChainIndex) -> &'pk2 PackBlockChain {
-        self.archive
-            .get_chain(chain)
-            .expect("invalid dir object, this is a bug")
+        self.archive.get_chain(chain).expect("invalid dir object")
     }
 
     pub fn name(&self) -> &str {

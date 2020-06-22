@@ -99,7 +99,7 @@ pub fn write_chain_entry<F: io::Seek + io::Write>(
 
 /// Write data to the end of the file returning the offset of the written
 /// data in the file.
-pub fn write_new_data_buffer<F: io::Seek + io::Write>(
+pub fn append_data<F: io::Seek + io::Write>(
     mut stream: F,
     data: &[u8],
 ) -> io::Result<StreamOffset> {
@@ -109,7 +109,7 @@ pub fn write_new_data_buffer<F: io::Seek + io::Write>(
 }
 
 /// Write raw data at the given offset into the buffer.
-pub fn write_data_buffer_at<F: io::Seek + io::Write>(
+pub fn write_data_at<F: io::Seek + io::Write>(
     mut file: F,
     StreamOffset(offset): StreamOffset,
     data: &[u8],
