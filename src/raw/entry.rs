@@ -1,6 +1,7 @@
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 
 use std::io::{Read, Result as IoResult, Write};
+use std::mem;
 use std::num::NonZeroU64;
 use std::time::SystemTime;
 
@@ -260,30 +261,20 @@ impl PackEntry {
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        match self {
-            PackEntry::Empty(_) => true,
-            _ => false,
-        }
+        matches!(self, PackEntry::Empty(_))
     }
 
     #[inline]
     pub fn is_file(&self) -> bool {
-        match self {
-            PackEntry::File(_) => true,
-            _ => false,
-        }
+        matches!(self, PackEntry::File(_))
     }
 
     #[inline]
     pub fn is_dir(&self) -> bool {
-        match self {
-            PackEntry::Directory(_) => true,
-            _ => false,
-        }
+        matches!(self, PackEntry::Directory(_))
     }
 }
 
-use std::mem;
 impl RawIo for PackEntry {
     /// Reads an entry from the given Read instance always reading exactly
     /// PK2_FILE_ENTRY_SIZE bytes.
