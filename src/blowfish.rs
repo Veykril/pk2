@@ -4,7 +4,17 @@ use std::convert::TryInto;
 use byteorder::{ByteOrder, LE};
 
 use crate::constants::PK2_SALT;
-use crate::error::{Error, Pk2Result};
+
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+pub struct InvalidKey;
+
+use std::fmt;
+impl std::error::Error for InvalidKey {}
+impl fmt::Display for InvalidKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid blowfish key")
+    }
+}
 
 pub struct Blowfish {
     s: [[u32; 256]; 4],
@@ -26,9 +36,9 @@ fn next_u32_wrap(buf: &[u8], offset: &mut usize) -> u32 {
 }
 
 impl Blowfish {
-    pub fn new(key: &[u8]) -> Pk2Result<Self> {
+    pub fn new(key: &[u8]) -> Result<Self, InvalidKey> {
         if key.len() < 4 || key.len() > 56 {
-            return Err(Error::InvalidKey);
+            return Err(InvalidKey);
         }
         let mut key = key.to_vec();
         gen_final_blowfish_key_inplace(&mut key);

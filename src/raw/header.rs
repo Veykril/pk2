@@ -4,7 +4,7 @@ use std::fmt;
 use std::io::{Read, Result as IoResult, Write};
 
 use crate::constants::*;
-use crate::error::{Error, Pk2Result};
+use crate::error::{OpenError, OpenResult};
 use crate::io::RawIo;
 use crate::Blowfish;
 
@@ -42,11 +42,11 @@ impl PackHeader {
 
     /// Validate the signature of this header. Returns an error if the version
     /// or signature does not match.
-    pub fn validate_sig(&self) -> Pk2Result<()> {
+    pub fn validate_sig(&self) -> OpenResult<()> {
         if &self.signature != PK2_SIGNATURE {
-            Err(Error::CorruptedFile)
+            Err(OpenError::CorruptedFile)
         } else if self.version != PK2_VERSION {
-            Err(Error::UnsupportedVersion)
+            Err(OpenError::UnsupportedVersion)
         } else {
             Ok(())
         }
@@ -54,9 +54,9 @@ impl PackHeader {
 
     /// Verifies the calculated checksum against this header returning an error
     /// if it doesn't match.
-    pub fn verify(&self, checksum: [u8; 16]) -> Pk2Result<()> {
+    pub fn verify(&self, checksum: [u8; 16]) -> OpenResult<()> {
         if checksum[..PK2_CHECKSUM_STORED] != self.verify[..PK2_CHECKSUM_STORED] {
-            Err(Error::InvalidKey)
+            Err(OpenError::InvalidKey)
         } else {
             Ok(())
         }
@@ -64,7 +64,7 @@ impl PackHeader {
 }
 
 impl RawIo for PackHeader {
-    fn from_reader<R: Read>(mut r: R) -> Pk2Result<Self> {
+    fn from_reader<R: Read>(mut r: R) -> IoResult<Self> {
         let mut signature = [0; 30];
         r.read_exact(&mut signature)?;
         let version = r.read_u32::<LE>()?;

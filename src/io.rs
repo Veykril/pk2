@@ -7,7 +7,7 @@ use std::io::{self, SeekFrom};
 use crate::constants::{
     PK2_CURRENT_DIR_IDENT, PK2_FILE_BLOCK_SIZE, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DIR_IDENT,
 };
-use crate::error::Pk2Result;
+use crate::error::{OpenResult, Pk2Result};
 use crate::raw::block_chain::{PackBlock, PackBlockChain};
 use crate::raw::entry::PackEntry;
 use crate::raw::{BlockOffset, ChainIndex, EntryOffset, StreamOffset};
@@ -18,12 +18,12 @@ pub fn read_block_at<F: io::Seek + io::Read>(
     bf: Option<&Blowfish>,
     mut stream: F,
     BlockOffset(offset): BlockOffset,
-) -> Pk2Result<PackBlock> {
+) -> OpenResult<PackBlock> {
     let mut buf = [0; PK2_FILE_BLOCK_SIZE];
     stream.seek(SeekFrom::Start(offset))?;
     stream.read_exact(&mut buf)?;
     bf.map(|bf| bf.decrypt(&mut buf));
-    PackBlock::from_reader(&buf[..])
+    PackBlock::from_reader(&buf[..]).map_err(Into::into)
 }
 
 pub fn read_exact_at<F: io::Seek + io::Read>(
@@ -55,7 +55,7 @@ pub fn write_block<F: io::Seek + io::Write>(
     mut stream: F,
     BlockOffset(offset): BlockOffset,
     block: &PackBlock,
-) -> Pk2Result<()> {
+) -> io::Result<()> {
     let mut buf = [0; PK2_FILE_BLOCK_SIZE];
     block.to_writer(&mut buf[..])?;
     bf.map(|bf| bf.encrypt(&mut buf));
@@ -154,13 +154,13 @@ pub fn allocate_new_block_chain<F: io::Seek + io::Write>(
 pub fn allocate_empty_block<F: io::Seek + io::Write>(
     bf: Option<&Blowfish>,
     mut stream: F,
-) -> Pk2Result<(BlockOffset, PackBlock)> {
+) -> io::Result<(BlockOffset, PackBlock)> {
     let offset = stream_len(&mut stream).map(BlockOffset)?;
     let block = PackBlock::default();
     write_block(bf, stream, offset, &block).and(Ok((offset, block)))
 }
 
 pub trait RawIo: Sized {
-    fn from_reader<R: io::Read>(r: R) -> Pk2Result<Self>;
+    fn from_reader<R: io::Read>(r: R) -> io::Result<Self>;
     fn to_writer<W: io::Write>(&self, w: W) -> io::Result<()>;
 }

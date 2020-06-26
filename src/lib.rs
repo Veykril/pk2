@@ -7,7 +7,7 @@ pub mod raw;
 pub(crate) mod io;
 
 mod error;
-pub use self::error::Error;
+pub use self::error::{Error, InvalidKey, OpenError};
 
 mod filetime;
 pub(crate) use self::filetime::FILETIME;

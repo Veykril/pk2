@@ -6,7 +6,7 @@ use crate::constants::{
     PK2_CHECKSUM, PK2_CURRENT_DIR_IDENT, PK2_PARENT_DIR_IDENT, PK2_ROOT_BLOCK,
     PK2_ROOT_BLOCK_VIRTUAL,
 };
-use crate::error::{Error, Pk2Result};
+use crate::error::{Error, OpenError, OpenResult, Pk2Result};
 use crate::io::RawIo;
 use crate::Blowfish;
 
@@ -26,7 +26,7 @@ pub struct Pk2<B = stdfs::File> {
 }
 
 impl Pk2<stdfs::File> {
-    pub fn create_new<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Pk2Result<Self> {
+    pub fn create_new<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> OpenResult<Self> {
         let file = stdfs::OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -35,7 +35,7 @@ impl Pk2<stdfs::File> {
         Self::_create_impl(file, key)
     }
 
-    pub fn open<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> Pk2Result<Self> {
+    pub fn open<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> OpenResult<Self> {
         let file = stdfs::OpenOptions::new()
             .write(true)
             .read(true)
@@ -45,8 +45,14 @@ impl Pk2<stdfs::File> {
 }
 
 impl Pk2<io::Cursor<Vec<u8>>> {
-    pub fn create_new_in_memory<K: AsRef<[u8]>>(key: K) -> Pk2Result<Self> {
-        Self::_create_impl(io::Cursor::new(Vec::with_capacity(4096)), key)
+    pub fn create_new_in_memory<K: AsRef<[u8]>>(
+        key: K,
+    ) -> Result<Self, crate::blowfish::InvalidKey> {
+        Self::_create_impl(io::Cursor::new(Vec::with_capacity(4096)), key).map_err(|e| {
+            debug_assert!(matches!(&e, OpenError::InvalidKey));
+            // the only error that can actually occur here is an InvalidKey error
+            crate::blowfish::InvalidKey
+        })
     }
 }
 
@@ -54,12 +60,12 @@ impl<B> Pk2<B>
 where
     B: io::Read + io::Seek,
 {
-    pub fn open_in<K: AsRef<[u8]>>(mut stream: B, key: K) -> Pk2Result<Self> {
+    pub fn open_in<K: AsRef<[u8]>>(mut stream: B, key: K) -> OpenResult<Self> {
         stream.seek(io::SeekFrom::Start(0))?;
         Self::_open_in_impl(stream, key)
     }
 
-    fn _open_in_impl<K: AsRef<[u8]>>(mut stream: B, key: K) -> Pk2Result<Self> {
+    fn _open_in_impl<K: AsRef<[u8]>>(mut stream: B, key: K) -> OpenResult<Self> {
         let header = PackHeader::from_reader(&mut stream)?;
         header.validate_sig()?;
         let blowfish = if header.encrypted {
@@ -85,12 +91,12 @@ impl<B> Pk2<B>
 where
     B: io::Read + io::Write + io::Seek,
 {
-    pub fn create_new_in<K: AsRef<[u8]>>(mut stream: B, key: K) -> Pk2Result<Self> {
+    pub fn create_new_in<K: AsRef<[u8]>>(mut stream: B, key: K) -> OpenResult<Self> {
         stream.seek(io::SeekFrom::Start(0))?;
         Self::_create_impl(stream, key)
     }
 
-    fn _create_impl<K: AsRef<[u8]>>(stream: B, key: K) -> Pk2Result<Self> {
+    fn _create_impl<K: AsRef<[u8]>>(stream: B, key: K) -> OpenResult<Self> {
         let (header, mut stream, blowfish) = if key.as_ref().is_empty() {
             (PackHeader::default(), stream, None)
         } else {
@@ -276,7 +282,7 @@ where
     /// This function traverses the whole path creating anything that does not
     /// yet exist returning the last created entry. This means using parent and
     /// current dir parts in a path that in the end directs to an already
-    /// existing path might still create new directories.
+    /// existing path might still create new directories that arent actually being used.
     fn create_entry_at(
         block_manager: &mut BlockManager,
         blowfish: Option<&Blowfish>,

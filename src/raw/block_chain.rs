@@ -105,6 +105,10 @@ impl PackBlockChain {
             .and_then(|(_, block)| block.get_mut(entry % PK2_FILE_BLOCK_ENTRY_COUNT))
     }
 
+    pub fn remove(&mut self, entry: usize) -> Option<PackEntry> {
+        self.get_mut(entry).map(PackEntry::clear)
+    }
+
     #[inline]
     pub fn contains_entry_index(&self, entry: usize) -> bool {
         entry < self.num_entries()
@@ -165,7 +169,7 @@ impl PackBlock {
 }
 
 impl RawIo for PackBlock {
-    fn from_reader<R: Read>(mut r: R) -> Pk2Result<Self> {
+    fn from_reader<R: Read>(mut r: R) -> IoResult<Self> {
         let mut entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT] = Default::default();
         for entry in &mut entries {
             *entry = PackEntry::from_reader(&mut r)?;

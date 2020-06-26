@@ -7,7 +7,6 @@ use std::time::SystemTime;
 
 use super::{BlockOffset, ChainIndex, StreamOffset};
 use crate::constants::{PK2_CURRENT_DIR_IDENT, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DIR_IDENT};
-use crate::error::{Error, Pk2Result};
 use crate::io::RawIo;
 use crate::FILETIME;
 
@@ -220,13 +219,13 @@ impl PackEntry {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self) -> PackEntry {
         let next_block = match *self {
             PackEntry::Empty(EmptyEntry { next_block })
             | PackEntry::Directory(DirectoryEntry { next_block, .. })
             | PackEntry::File(FileEntry { next_block, .. }) => next_block,
         };
-        *self = PackEntry::new_empty(next_block);
+        mem::replace(self, PackEntry::new_empty(next_block))
     }
 
     pub fn next_block(&self) -> Option<NonZeroU64> {
@@ -278,7 +277,7 @@ impl PackEntry {
 impl RawIo for PackEntry {
     /// Reads an entry from the given Read instance always reading exactly
     /// PK2_FILE_ENTRY_SIZE bytes.
-    fn from_reader<R: Read>(mut r: R) -> Pk2Result<Self> {
+    fn from_reader<R: Read>(mut r: R) -> IoResult<Self> {
         match r.read_u8()? {
             0 => {
                 r.read_exact(
@@ -345,7 +344,10 @@ impl RawIo for PackEntry {
                     })
                 })
             }
-            _ => Err(Error::CorruptedFile),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "archive file is corrupted",
+            )),
         }
     }
 

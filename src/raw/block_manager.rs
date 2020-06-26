@@ -6,7 +6,7 @@ use super::block_chain::{PackBlock, PackBlockChain};
 use super::entry::{DirectoryEntry, PackEntry};
 use super::{BlockOffset, ChainIndex};
 use crate::constants::{PK2_ROOT_BLOCK, PK2_ROOT_BLOCK_VIRTUAL};
-use crate::error::{Error, Pk2Result};
+use crate::error::{Error, OpenResult, Pk2Result};
 use crate::Blowfish;
 
 /// Simple BlockManager backed by a hashmap.
@@ -16,7 +16,7 @@ pub struct BlockManager {
 
 impl BlockManager {
     /// Parses the complete index of a pk2 file
-    pub fn new<F: io::Read + io::Seek>(bf: Option<&Blowfish>, mut stream: F) -> Pk2Result<Self> {
+    pub fn new<F: io::Read + io::Seek>(bf: Option<&Blowfish>, mut stream: F) -> OpenResult<Self> {
         let mut chains = HashMap::with_capacity_and_hasher(32, NoHashHasherBuilder);
         // used to prevent an infinite loop that can be caused by specific files
         let mut visited_block_set = HashSet::with_capacity_and_hasher(32, NoHashHasherBuilder);
@@ -61,7 +61,7 @@ impl BlockManager {
         bf: Option<&Blowfish>,
         stream: &mut F,
         offset: ChainIndex,
-    ) -> Pk2Result<PackBlockChain> {
+    ) -> OpenResult<PackBlockChain> {
         let mut blocks = Vec::new();
         let mut offset = offset.into();
 
