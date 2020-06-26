@@ -25,7 +25,7 @@ impl EmptyEntry {
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct DirectoryEntry {
-    name: String,
+    name: Box<str>,
     pub(crate) access_time: FILETIME,
     pub(crate) create_time: FILETIME,
     pub(crate) modify_time: FILETIME,
@@ -34,7 +34,7 @@ pub struct DirectoryEntry {
 }
 
 impl DirectoryEntry {
-    fn new(name: String, pos_children: ChainIndex, next_block: Option<NonZeroU64>) -> Self {
+    fn new(name: Box<str>, pos_children: ChainIndex, next_block: Option<NonZeroU64>) -> Self {
         let ftime = FILETIME::now();
         DirectoryEntry {
             name,
@@ -75,12 +75,12 @@ impl DirectoryEntry {
 
     #[inline]
     pub fn is_current_link(&self) -> bool {
-        self.name == PK2_CURRENT_DIR_IDENT
+        self.name() == PK2_CURRENT_DIR_IDENT
     }
 
     #[inline]
     pub fn is_parent_link(&self) -> bool {
-        self.name == PK2_PARENT_DIR_IDENT
+        self.name() == PK2_PARENT_DIR_IDENT
     }
 
     #[inline]
@@ -91,7 +91,7 @@ impl DirectoryEntry {
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct FileEntry {
-    name: String,
+    name: Box<str>,
     pub(crate) access_time: FILETIME,
     pub(crate) create_time: FILETIME,
     pub(crate) modify_time: FILETIME,
@@ -102,7 +102,7 @@ pub struct FileEntry {
 
 impl FileEntry {
     pub(crate) fn new(
-        name: String,
+        name: Box<str>,
         pos_data: StreamOffset,
         size: u32,
         next_block: Option<NonZeroU64>,
@@ -168,7 +168,7 @@ impl Default for PackEntry {
 
 impl PackEntry {
     pub fn new_directory(
-        name: impl Into<String>,
+        name: impl Into<Box<str>>,
         pos_children: ChainIndex,
         next_block: Option<NonZeroU64>,
     ) -> Self {
@@ -176,7 +176,7 @@ impl PackEntry {
     }
 
     pub fn new_file(
-        name: impl Into<String>,
+        name: impl Into<Box<str>>,
         pos_data: StreamOffset,
         size: u32,
         next_block: Option<NonZeroU64>,
@@ -305,7 +305,7 @@ impl RawIo for PackEntry {
                         .0;
                     #[cfg(not(feature = "euc"))]
                     let name = String::from_utf8_lossy(&buf[..end]);
-                    name.into_owned()
+                    name.into_owned().into_boxed_str()
                 };
                 let access_time = FILETIME {
                     dwLowDateTime: r.read_u32::<LE>()?,
