@@ -1,0 +1,27 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    name: Cargo Test
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.is-nightly }}
+    strategy:
+      matrix:
+        toolchain: [stable]
+        is-nightly: [false]
+        include:
+          - toolchain: nightly
+            is-nightly: true
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: ${{ matrix.toolchain }}
+        override: true
+    - uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --no-default-features
