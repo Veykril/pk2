@@ -6,7 +6,7 @@ use crate::constants::{
     PK2_CHECKSUM, PK2_CURRENT_DIR_IDENT, PK2_PARENT_DIR_IDENT, PK2_ROOT_BLOCK,
     PK2_ROOT_BLOCK_VIRTUAL,
 };
-use crate::error::{Error, OpenError, OpenResult, Pk2Result};
+use crate::error::{ChainLookupError, ChainLookupResult, OpenError, OpenResult};
 use crate::io::RawIo;
 use crate::Blowfish;
 
@@ -148,34 +148,34 @@ impl<B> Pk2<B> {
     fn root_resolve_path_to_entry_and_parent<P: AsRef<Path>>(
         &self,
         path: P,
-    ) -> Pk2Result<(ChainIndex, usize, &PackEntry)> {
+    ) -> ChainLookupResult<(ChainIndex, usize, &PackEntry)> {
         self.block_manager
             .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)
     }
 
-    pub(self) fn is_file(entry: &PackEntry) -> Pk2Result<()> {
+    pub(self) fn is_file(entry: &PackEntry) -> ChainLookupResult<()> {
         match entry.is_file() {
             true => Ok(()),
-            false => Err(Error::ExpectedFile),
+            false => Err(ChainLookupError::ExpectedFile),
         }
     }
 
-    pub(self) fn is_dir(entry: &PackEntry) -> Pk2Result<()> {
+    pub(self) fn is_dir(entry: &PackEntry) -> ChainLookupResult<()> {
         match entry.is_dir() {
             true => Ok(()),
-            false => Err(Error::ExpectedDirectory),
+            false => Err(ChainLookupError::ExpectedDirectory),
         }
     }
 }
 
 impl<B> Pk2<B> {
-    pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Pk2Result<File<B>> {
+    pub fn open_file<P: AsRef<Path>>(&self, path: P) -> ChainLookupResult<File<B>> {
         let (chain, entry_idx, entry) = self.root_resolve_path_to_entry_and_parent(path)?;
         Self::is_file(entry)?;
         Ok(File::new(self, chain, entry_idx))
     }
 
-    pub fn open_directory<P: AsRef<Path>>(&self, path: P) -> Pk2Result<Directory<B>> {
+    pub fn open_directory<P: AsRef<Path>>(&self, path: P) -> ChainLookupResult<Directory<B>> {
         let path = check_root(path.as_ref())?;
         let (chain, entry_idx) = match self
             .block_manager
@@ -186,7 +186,7 @@ impl<B> Pk2<B> {
                 (chain, entry_idx)
             }
             // path was just root
-            Err(Error::InvalidPath) => (PK2_ROOT_BLOCK_VIRTUAL, 0),
+            Err(ChainLookupError::InvalidPath) => (PK2_ROOT_BLOCK_VIRTUAL, 0),
             Err(e) => return Err(e),
         };
         Ok(Directory::new(self, chain, entry_idx))
@@ -199,8 +199,8 @@ impl<B> Pk2<B> {
     pub fn for_each_file(
         &self,
         base: impl AsRef<Path>,
-        mut cb: impl FnMut(&Path, File<B>) -> Pk2Result<()>,
-    ) -> Pk2Result<()> {
+        mut cb: impl FnMut(&Path, File<B>) -> io::Result<()>,
+    ) -> io::Result<()> {
         let mut path = std::path::PathBuf::new();
         let mut stack = vec![self.open_directory(base)?];
         let mut first_iteration = true;
@@ -236,7 +236,7 @@ impl<B> Pk2<B>
 where
     B: io::Read + io::Write + io::Seek,
 {
-    pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<FileMut<B>> {
+    pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> ChainLookupResult<FileMut<B>> {
         let (chain, entry_idx, entry) = self.root_resolve_path_to_entry_and_parent(path)?;
         Self::is_file(entry)?;
         Ok(FileMut::new(self, chain, entry_idx))
@@ -244,7 +244,7 @@ where
 
     /// Currently only replaces the entry with an empty one making the data
     /// inaccessible by normal means
-    pub fn delete_file<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<()> {
+    pub fn delete_file<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         let (chain_index, entry_idx, entry) = self
             .block_manager
             .resolve_path_to_entry_and_parent_mut(PK2_ROOT_BLOCK, check_root(path.as_ref())?)?;
@@ -260,13 +260,12 @@ where
         Ok(())
     }
 
-    pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> Pk2Result<FileMut<B>> {
+    pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> io::Result<FileMut<B>> {
         let path = check_root(path.as_ref())?;
         let file_name = path
             .file_name()
-            .ok_or(Error::InvalidPath)?
-            .to_str()
-            .ok_or(Error::NonUnicodePath)?;
+            .and_then(std::ffi::OsStr::to_str)
+            .ok_or(ChainLookupError::InvalidPath)?;
         let (chain, entry_idx) = Self::create_entry_at(
             &mut self.block_manager,
             self.blowfish.as_ref(),
@@ -289,7 +288,7 @@ where
         mut stream: &mut B,
         chain: ChainIndex,
         path: &Path,
-    ) -> Pk2Result<(ChainIndex, usize)> {
+    ) -> io::Result<(ChainIndex, usize)> {
         use crate::io::{allocate_empty_block, allocate_new_block_chain, write_chain_entry};
         let (mut current_chain_index, mut components) =
             block_manager.validate_dir_path_until(chain, path)?;
@@ -298,7 +297,7 @@ where
                 Component::Normal(p) => {
                     let current_chain = block_manager
                         .get_mut(current_chain_index)
-                        .ok_or(Error::InvalidChainIndex)?;
+                        .ok_or(ChainLookupError::InvalidChainIndex)?;
                     let empty_pos = current_chain.entries().position(PackEntry::is_empty);
                     let chain_entry_idx = if let Some(idx) = empty_pos {
                         idx
@@ -318,7 +317,7 @@ where
                     // Are we done after this? if not, create a new blockchain since this is a new
                     // directory
                     if components.peek().is_some() {
-                        let dir_name = p.to_str().ok_or(Error::NonUnicodePath)?;
+                        let dir_name = p.to_str().ok_or(ChainLookupError::InvalidPath)?;
                         let block_chain = allocate_new_block_chain(
                             blowfish,
                             &mut stream,
@@ -335,18 +334,19 @@ where
                 Component::ParentDir => {
                     current_chain_index = block_manager
                         .get_mut(current_chain_index)
-                        .ok_or(Error::InvalidChainIndex)
+                        .ok_or(ChainLookupError::InvalidChainIndex)
                         .and_then(|entry| entry.find_block_chain_index_of(PK2_PARENT_DIR_IDENT))?
                 }
                 Component::CurDir => (),
                 _ => unreachable!(),
             }
         }
-        Err(Error::AlreadyExists)
+        Err(io::ErrorKind::AlreadyExists.into())
     }
 }
 
 #[inline]
-fn check_root(path: &Path) -> Pk2Result<&Path> {
-    path.strip_prefix("/").map_err(|_| Error::InvalidPath)
+fn check_root(path: &Path) -> ChainLookupResult<&Path> {
+    path.strip_prefix("/")
+        .map_err(|_| ChainLookupError::InvalidPath)
 }

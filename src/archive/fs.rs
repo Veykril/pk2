@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use crate::archive::Pk2;
-use crate::error::{Error, Pk2Result};
+use crate::error::{ChainLookupError, ChainLookupResult};
 use crate::raw::block_chain::PackBlockChain;
 use crate::raw::entry::{DirectoryEntry, FileEntry, PackEntry};
 use crate::raw::{ChainIndex, StreamOffset};
@@ -168,6 +168,12 @@ where
         this.modify_time = other.modify_time;
         this.create_time = other.create_time;
         this.access_time = other.access_time;
+    }
+
+    pub fn flush_drop(mut self) -> io::Result<()> {
+        let res = self.flush();
+        std::mem::forget(self);
+        res
     }
 
     #[inline]
@@ -406,7 +412,7 @@ impl<'pk2, B> Directory<'pk2, B> {
         self.entry().create_time.into_systime()
     }
 
-    pub fn open_file(&self, path: impl AsRef<Path>) -> Pk2Result<File<'pk2, B>> {
+    pub fn open_file(&self, path: impl AsRef<Path>) -> ChainLookupResult<File<'pk2, B>> {
         let (chain, entry_idx, entry) = self
             .archive
             .block_manager
@@ -414,7 +420,7 @@ impl<'pk2, B> Directory<'pk2, B> {
         Pk2::<B>::is_file(entry).map(|_| File::new(self.archive, chain, entry_idx))
     }
 
-    pub fn open_directory(&self, path: impl AsRef<Path>) -> Pk2Result<Directory<'pk2, B>> {
+    pub fn open_directory(&self, path: impl AsRef<Path>) -> ChainLookupResult<Directory<'pk2, B>> {
         let (chain, entry_idx, entry) = self
             .archive
             .block_manager
@@ -427,16 +433,16 @@ impl<'pk2, B> Directory<'pk2, B> {
         {
             Ok(Directory::new(self.archive, chain, entry_idx))
         } else {
-            Err(Error::NotFound)
+            Err(ChainLookupError::NotFound)
         }
     }
 
-    pub fn open(&self, path: impl AsRef<Path>) -> Pk2Result<DirEntry<'pk2, B>> {
+    pub fn open(&self, path: impl AsRef<Path>) -> ChainLookupResult<DirEntry<'pk2, B>> {
         let (chain, entry_idx, entry) = self
             .archive
             .block_manager
             .resolve_path_to_entry_and_parent(self.chain, path.as_ref())?;
-        DirEntry::from(entry, self.archive, chain, entry_idx).ok_or(Error::NotFound)
+        DirEntry::from(entry, self.archive, chain, entry_idx).ok_or(ChainLookupError::NotFound)
     }
 
     /// Returns an iterator over all files in this directory.

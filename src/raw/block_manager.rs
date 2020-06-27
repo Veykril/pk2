@@ -6,7 +6,7 @@ use super::block_chain::{PackBlock, PackBlockChain};
 use super::entry::{DirectoryEntry, PackEntry};
 use super::{BlockOffset, ChainIndex};
 use crate::constants::{PK2_ROOT_BLOCK, PK2_ROOT_BLOCK_VIRTUAL};
-use crate::error::{Error, OpenResult, Pk2Result};
+use crate::error::{ChainLookupError, ChainLookupResult, OpenResult};
 use crate::Blowfish;
 
 /// Simple BlockManager backed by a hashmap.
@@ -97,16 +97,19 @@ impl BlockManager {
         &self,
         current_chain: ChainIndex,
         path: &'path Path,
-    ) -> Pk2Result<(ChainIndex, &'path str)> {
+    ) -> ChainLookupResult<(ChainIndex, &'path str)> {
         let mut components = path.components();
 
         if let Some(c) = components.next_back() {
             let parent_index =
                 self.resolve_path_to_block_chain_index_at(current_chain, components.as_path())?;
-            let name = c.as_os_str().to_str().ok_or(Error::NonUnicodePath)?;
+            let name = c
+                .as_os_str()
+                .to_str()
+                .ok_or(ChainLookupError::InvalidPath)?;
             Ok((parent_index, name))
         } else {
-            Err(Error::InvalidPath)
+            Err(ChainLookupError::InvalidPath)
         }
     }
 
@@ -117,16 +120,16 @@ impl BlockManager {
         &self,
         current_chain: ChainIndex,
         path: &Path,
-    ) -> Pk2Result<(ChainIndex, usize, &PackEntry)> {
+    ) -> ChainLookupResult<(ChainIndex, usize, &PackEntry)> {
         self.resolve_path_to_parent(current_chain, path)
             .and_then(|(parent_index, name)| {
                 self.chains
                     .get(&parent_index)
-                    .ok_or(Error::InvalidChainIndex)?
+                    .ok_or(ChainLookupError::InvalidChainIndex)?
                     .entries()
                     .enumerate()
                     .find(|(_, entry)| entry.name_eq_ignore_ascii_case(name))
-                    .ok_or(Error::NotFound)
+                    .ok_or(ChainLookupError::NotFound)
                     .map(|(idx, entry)| (parent_index, idx, entry))
             })
     }
@@ -135,16 +138,16 @@ impl BlockManager {
         &mut self,
         current_chain: ChainIndex,
         path: &Path,
-    ) -> Pk2Result<(ChainIndex, usize, &mut PackEntry)> {
+    ) -> ChainLookupResult<(ChainIndex, usize, &mut PackEntry)> {
         self.resolve_path_to_parent(current_chain, path)
             .and_then(move |(parent_index, name)| {
                 self.chains
                     .get_mut(&parent_index)
-                    .ok_or(Error::InvalidChainIndex)?
+                    .ok_or(ChainLookupError::InvalidChainIndex)?
                     .entries_mut()
                     .enumerate()
                     .find(|(_, entry)| entry.name_eq_ignore_ascii_case(name))
-                    .ok_or(Error::NotFound)
+                    .ok_or(ChainLookupError::NotFound)
                     .map(|(idx, entry)| (parent_index, idx, entry))
             })
     }
@@ -155,15 +158,15 @@ impl BlockManager {
         &self,
         current_chain: ChainIndex,
         path: &Path,
-    ) -> Pk2Result<ChainIndex> {
+    ) -> ChainLookupResult<ChainIndex> {
         path.components().try_fold(current_chain, |idx, component| {
             let comp = component
                 .as_os_str()
                 .to_str()
-                .ok_or(Error::NonUnicodePath)?;
+                .ok_or(ChainLookupError::InvalidPath)?;
             self.chains
                 .get(&idx)
-                .ok_or(Error::InvalidChainIndex)?
+                .ok_or(ChainLookupError::InvalidChainIndex)?
                 .find_block_chain_index_of(comp)
         })
     }
@@ -175,26 +178,26 @@ impl BlockManager {
         &self,
         mut chain: ChainIndex,
         path: &'p Path,
-    ) -> Pk2Result<(ChainIndex, std::iter::Peekable<std::path::Components<'p>>)> {
+    ) -> ChainLookupResult<(ChainIndex, std::iter::Peekable<std::path::Components<'p>>)> {
         let mut components = path.components().peekable();
         while let Some(component) = components.peek() {
             let name = component
                 .as_os_str()
                 .to_str()
-                .ok_or(Error::NonUnicodePath)?;
+                .ok_or(ChainLookupError::InvalidPath)?;
             match self
                 .chains
                 .get(&chain)
-                .ok_or(Error::InvalidChainIndex)?
+                .ok_or(ChainLookupError::InvalidChainIndex)?
                 .find_block_chain_index_of(name)
             {
                 Ok(i) => chain = i,
                 // lies outside of the archive
-                Err(Error::NotFound) if component == &Component::ParentDir => {
-                    return Err(Error::InvalidPath)
+                Err(ChainLookupError::NotFound) if component == &Component::ParentDir => {
+                    return Err(ChainLookupError::InvalidPath)
                 }
                 // found a non-existent part, we are done here
-                Err(Error::NotFound) => break,
+                Err(ChainLookupError::NotFound) => break,
                 Err(e) => return Err(e),
             }
             let _ = components.next();

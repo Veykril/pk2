@@ -4,7 +4,7 @@ use std::ops;
 use super::entry::{DirectoryEntry, PackEntry};
 use super::{BlockOffset, ChainIndex, EntryOffset};
 use crate::constants::*;
-use crate::error::{Error, Pk2Result};
+use crate::error::{ChainLookupError, ChainLookupResult};
 use crate::io::RawIo;
 
 /// A collection of [`PackBlock`]s where each blocks next_block field points to
@@ -117,13 +117,13 @@ impl PackBlockChain {
     /// Looks up the `directory` name in this [`PackBlockChain`], returning the
     /// offset of the ['PackBlockChain'] corresponding to the directory if
     /// successful.
-    pub fn find_block_chain_index_of(&self, directory: &str) -> Pk2Result<ChainIndex> {
+    pub fn find_block_chain_index_of(&self, directory: &str) -> ChainLookupResult<ChainIndex> {
         self.entries()
             .find(|entry| entry.name_eq_ignore_ascii_case(directory))
-            .ok_or(Error::NotFound)?
+            .ok_or(ChainLookupError::NotFound)?
             .as_directory()
             .map(DirectoryEntry::children_position)
-            .ok_or(Error::ExpectedDirectory)
+            .ok_or(ChainLookupError::ExpectedDirectory)
     }
 }
 

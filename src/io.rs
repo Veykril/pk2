@@ -7,7 +7,7 @@ use std::io::{self, SeekFrom};
 use crate::constants::{
     PK2_CURRENT_DIR_IDENT, PK2_FILE_BLOCK_SIZE, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DIR_IDENT,
 };
-use crate::error::{OpenResult, Pk2Result};
+use crate::error::OpenResult;
 use crate::raw::block_chain::{PackBlock, PackBlockChain};
 use crate::raw::entry::PackEntry;
 use crate::raw::{BlockOffset, ChainIndex, EntryOffset, StreamOffset};
@@ -126,7 +126,7 @@ pub fn allocate_new_block_chain<F: io::Seek + io::Write>(
     current_chain: &mut PackBlockChain,
     dir_name: &str,
     chain_entry_idx: usize,
-) -> Pk2Result<PackBlockChain> {
+) -> io::Result<PackBlockChain> {
     debug_assert!(current_chain.contains_entry_index(chain_entry_idx));
     let new_chain_offset = stream_len(&mut stream).map(ChainIndex)?;
 
