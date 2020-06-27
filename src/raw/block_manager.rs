@@ -174,11 +174,13 @@ impl BlockManager {
     /// Traverses the path until it hits a non-existent component and returns
     /// the rest of the path as a peekable as well as the chain index of the
     /// last valid part.
+    /// A return value of Ok(None) means the entire path has been searched
     pub fn validate_dir_path_until<'p>(
         &self,
         mut chain: ChainIndex,
         path: &'p Path,
-    ) -> ChainLookupResult<(ChainIndex, std::iter::Peekable<std::path::Components<'p>>)> {
+    ) -> ChainLookupResult<Option<(ChainIndex, std::iter::Peekable<std::path::Components<'p>>)>>
+    {
         let mut components = path.components().peekable();
         while let Some(component) = components.peek() {
             let name = component
@@ -198,11 +200,24 @@ impl BlockManager {
                 }
                 // found a non-existent part, we are done here
                 Err(ChainLookupError::NotFound) => break,
-                Err(e) => return Err(e),
+                Err(ChainLookupError::ExpectedDirectory) => {
+                    return if components.count() == 1 {
+                        // found a file name at the end of the path
+                        // this means the path has been fully searched
+                        Ok(None)
+                    } else {
+                        Err(ChainLookupError::ExpectedDirectory)
+                    };
+                }
+                Err(_) => unreachable!(),
             }
             let _ = components.next();
         }
-        Ok((chain, components))
+        if components.clone().count() == 0 {
+            Ok(None)
+        } else {
+            Ok(Some((chain, components)))
+        }
     }
 }
 

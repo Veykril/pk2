@@ -290,8 +290,9 @@ where
         path: &Path,
     ) -> io::Result<(ChainIndex, usize)> {
         use crate::io::{allocate_empty_block, allocate_new_block_chain, write_chain_entry};
-        let (mut current_chain_index, mut components) =
-            block_manager.validate_dir_path_until(chain, path)?;
+        let (mut current_chain_index, mut components) = block_manager
+            .validate_dir_path_until(chain, path)?
+            .ok_or_else(|| io::Error::from(io::ErrorKind::AlreadyExists))?;
         while let Some(component) = components.next() {
             match component {
                 Component::Normal(p) => {
@@ -349,4 +350,18 @@ where
 fn check_root(path: &Path) -> ChainLookupResult<&Path> {
     path.strip_prefix("/")
         .map_err(|_| ChainLookupError::InvalidPath)
+}
+
+#[cfg(test)]
+mod test {
+    use std::io;
+    #[test]
+    fn create_already_existing() {
+        let mut archive = super::Pk2::create_new_in_memory("").unwrap();
+        archive.create_file("/test/foo.baz").unwrap();
+        match archive.create_file("/test/foo.baz") {
+            Err(e) => assert_eq!(e.kind(), io::ErrorKind::AlreadyExists),
+            Ok(_) => panic!("file was created twice?"),
+        };
+    }
 }
