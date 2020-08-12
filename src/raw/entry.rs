@@ -298,11 +298,11 @@ impl RawIo for PackEntry {
                         .iter()
                         .position(|b| *b == 0)
                         .unwrap_or_else(|| buf.len());
-                    #[cfg(feature = "euc")]
+                    #[cfg(feature = "euc-kr")]
                     let name = encoding_rs::EUC_KR
                         .decode_without_bom_handling(&buf[..end])
                         .0;
-                    #[cfg(not(feature = "euc"))]
+                    #[cfg(not(feature = "euc-kr"))]
                     let name = String::from_utf8_lossy(&buf[..end]);
                     name.into_owned().into_boxed_str()
                 };
@@ -379,9 +379,9 @@ impl RawIo for PackEntry {
                 ..
             }) => {
                 w.write_u8(if self.is_dir() { 1 } else { 2 })?;
-                #[cfg(feature = "euc")]
+                #[cfg(feature = "euc-kr")]
                 let mut encoded = encoding_rs::EUC_KR.encode(name).0.into_owned();
-                #[cfg(not(feature = "euc"))]
+                #[cfg(not(feature = "euc-kr"))]
                 let mut encoded = name.as_bytes().to_owned();
                 encoded.resize(81, 0);
                 w.write_all(&encoded)?;
