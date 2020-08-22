@@ -40,6 +40,10 @@ impl<'pk2, B> File<'pk2, B> {
         self.entry().create_time()
     }
 
+    pub fn size(&self) -> u32 {
+        self.entry().size
+    }
+
     #[inline]
     pub fn name(&self) -> &str {
         self.entry().name()
@@ -168,6 +172,10 @@ where
         this.modify_time = other.modify_time;
         this.create_time = other.create_time;
         this.access_time = other.access_time;
+    }
+
+    pub fn size(&self) -> u32 {
+        self.entry().size
     }
 
     pub fn flush_drop(mut self) -> io::Result<()> {

@@ -234,6 +234,18 @@ impl<B> Pk2<B> {
 
 impl<B> Pk2<B>
 where
+    B: io::Read + io::Seek,
+{
+    pub fn read<P: AsRef<Path>>(&self, path: P) -> io::Result<Vec<u8>> {
+        let mut file = self.open_file(path)?;
+        let mut buf = vec![0; file.size() as usize];
+        std::io::Read::read_to_end(&mut file, &mut buf)?;
+        Ok(buf)
+    }
+}
+
+impl<B> Pk2<B>
+where
     B: io::Read + io::Write + io::Seek,
 {
     pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> ChainLookupResult<FileMut<B>> {
