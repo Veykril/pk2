@@ -238,7 +238,7 @@ where
 {
     pub fn read<P: AsRef<Path>>(&self, path: P) -> io::Result<Vec<u8>> {
         let mut file = self.open_file(path)?;
-        let mut buf = vec![0; file.size() as usize];
+        let mut buf = Vec::with_capacity(file.size() as usize);
         std::io::Read::read_to_end(&mut file, &mut buf)?;
         Ok(buf)
     }
