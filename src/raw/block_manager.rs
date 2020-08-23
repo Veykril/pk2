@@ -5,7 +5,7 @@ use std::path::{Component, Path};
 use super::block_chain::{PackBlock, PackBlockChain};
 use super::entry::{DirectoryEntry, PackEntry};
 use super::{BlockOffset, ChainIndex};
-use crate::constants::{PK2_ROOT_BLOCK, PK2_ROOT_BLOCK_VIRTUAL};
+use crate::constants::{PK2_FILE_BLOCK_ENTRY_COUNT, PK2_ROOT_BLOCK, PK2_ROOT_BLOCK_VIRTUAL};
 use crate::error::{ChainLookupError, ChainLookupResult, OpenResult};
 use crate::Blowfish;
 
@@ -217,6 +217,14 @@ impl BlockManager {
             Ok(None)
         } else {
             Ok(Some((chain, components)))
+        }
+    }
+
+    pub fn sort(&mut self) {
+        let scratch = &mut Vec::with_capacity(4 * PK2_FILE_BLOCK_ENTRY_COUNT);
+        for chain in self.chains.values_mut() {
+            chain.sort(scratch);
+            scratch.clear();
         }
     }
 }

@@ -42,6 +42,13 @@ impl Pk2<stdfs::File> {
             .open(path)?;
         Self::_open_in_impl(file, key)
     }
+
+    pub fn open_sorted<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> OpenResult<Self> {
+        let file = stdfs::OpenOptions::new().read(true).open(path)?;
+        let mut this = Self::_open_in_impl(file, key)?;
+        this.block_manager.sort();
+        Ok(this)
+    }
 }
 
 impl Pk2<io::Cursor<Vec<u8>>> {

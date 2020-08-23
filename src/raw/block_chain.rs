@@ -125,6 +125,26 @@ impl PackBlockChain {
             .map(DirectoryEntry::children_position)
             .ok_or(ChainLookupError::ExpectedDirectory)
     }
+
+    pub fn sort(&mut self, scratch: &mut Vec<PackEntry>) {
+        use std::cmp::Ordering;
+        self.entries_mut()
+            .for_each(|entry| scratch.push(std::mem::replace(entry, PackEntry::new_empty(None))));
+        scratch.sort_by(|a, b| match (a, b) {
+            (PackEntry::Empty(_), PackEntry::Empty(_)) => Ordering::Equal,
+            (PackEntry::Empty(_), _) | (PackEntry::File(_), PackEntry::Directory(_)) => {
+                Ordering::Greater
+            }
+            (_, PackEntry::Empty(_)) | (PackEntry::Directory(_), PackEntry::File(_)) => {
+                Ordering::Less
+            }
+            (PackEntry::File(a), PackEntry::File(b)) => a.name().cmp(b.name()),
+            (PackEntry::Directory(a), PackEntry::Directory(b)) => a.name().cmp(b.name()),
+        });
+        self.entries_mut()
+            .zip(scratch.drain(..))
+            .for_each(|(dst, src)| drop(std::mem::replace(dst, src)));
+    }
 }
 
 impl ops::Index<usize> for PackBlockChain {
