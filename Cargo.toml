@@ -14,5 +14,8 @@ default = ["euc-kr"]
 # required for parsing silkroad online archives
 euc-kr = ["encoding_rs"]
 
+[dev-dependencies]
+bytemuck = "1.2"
+
 [workspace]
 members = ["pk2_mate"]

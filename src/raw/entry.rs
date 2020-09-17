@@ -10,7 +10,7 @@ use crate::constants::{PK2_CURRENT_DIR_IDENT, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DI
 use crate::io::RawIo;
 use crate::FILETIME;
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct EmptyEntry {
     next_block: Option<NonZeroU64>,
 }
@@ -22,7 +22,7 @@ impl EmptyEntry {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectoryEntry {
     name: Box<str>,
     pub(crate) access_time: FILETIME,
@@ -40,6 +40,22 @@ impl DirectoryEntry {
             access_time: ftime,
             create_time: ftime,
             modify_time: ftime,
+            pos_children,
+            next_block,
+        }
+    }
+
+    #[cfg(test)]
+    fn new_untimed(
+        name: Box<str>,
+        pos_children: ChainIndex,
+        next_block: Option<NonZeroU64>,
+    ) -> Self {
+        DirectoryEntry {
+            name,
+            access_time: FILETIME::default(),
+            create_time: FILETIME::default(),
+            modify_time: FILETIME::default(),
             pos_children,
             next_block,
         }
@@ -88,7 +104,7 @@ impl DirectoryEntry {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileEntry {
     name: Box<str>,
     pub(crate) access_time: FILETIME,
@@ -112,6 +128,24 @@ impl FileEntry {
             access_time: ftime,
             create_time: ftime,
             modify_time: ftime,
+            pos_data,
+            size,
+            next_block,
+        }
+    }
+
+    #[cfg(test)]
+    fn new_untimed(
+        name: Box<str>,
+        pos_data: StreamOffset,
+        size: u32,
+        next_block: Option<NonZeroU64>,
+    ) -> Self {
+        FileEntry {
+            name,
+            access_time: FILETIME::default(),
+            create_time: FILETIME::default(),
+            modify_time: FILETIME::default(),
             pos_data,
             size,
             next_block,
@@ -152,7 +186,7 @@ impl FileEntry {
 }
 
 /// An entry of a [`PackBlock`].
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PackEntry {
     Empty(EmptyEntry),
     Directory(DirectoryEntry),
@@ -392,8 +426,8 @@ impl RawIo for PackEntry {
                 w.write_u32::<LE>(modify_time.dwLowDateTime)?;
                 w.write_u32::<LE>(modify_time.dwHighDateTime)?;
                 w.write_u64::<LE>(*position)?;
-                w.write_u32::<LE>(if let PackEntry::File(FileEntry { size, .. }) = self {
-                    *size
+                w.write_u32::<LE>(if let &PackEntry::File(FileEntry { size, .. }) = self {
+                    size
                 } else {
                     0
                 })?;
@@ -402,5 +436,89 @@ impl RawIo for PackEntry {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::num::NonZeroU64;
+
+    use crate::FILETIME;
+    use crate::{
+        constants::{RawPackFileEntry, PK2_FILE_ENTRY_SIZE},
+        raw::ChainIndex,
+    };
+    use crate::{io::RawIo, raw::StreamOffset};
+
+    use super::{DirectoryEntry, FileEntry, PackEntry};
+
+    #[test]
+    fn pack_entry_read_empty() {
+        let mut buf = [0u8; PK2_FILE_ENTRY_SIZE];
+        assert_eq!(
+            PackEntry::from_reader(&mut &buf[..]).unwrap(),
+            PackEntry::new_empty(None)
+        );
+        buf[PK2_FILE_ENTRY_SIZE - 10..][..8].copy_from_slice(&u64::to_le_bytes(1337));
+
+        assert_eq!(
+            PackEntry::from_reader(&mut &buf[..]).unwrap(),
+            PackEntry::new_empty(NonZeroU64::new(1337))
+        );
+    }
+
+    #[test]
+    fn pack_entry_read_directory() {
+        let mut entry = RawPackFileEntry {
+            ty: 1,
+            name: [0; 81],
+            access: FILETIME::default(),
+            create: FILETIME::default(),
+            modify: FILETIME::default(),
+            position: 12345,
+            size: 0,
+            next_block: 63459,
+            _padding: [0, 0],
+        };
+        entry.name[..6].copy_from_slice(b"foobar");
+        assert_eq!(
+            PackEntry::from_reader(
+                &mut &bytemuck::cast_ref::<_, [u8; PK2_FILE_ENTRY_SIZE]>(&entry)[..]
+            )
+            .unwrap(),
+            PackEntry::Directory(DirectoryEntry::new_untimed(
+                "foobar".into(),
+                ChainIndex(12345),
+                NonZeroU64::new(63459)
+            ))
+        );
+    }
+
+    #[test]
+    fn pack_entry_read_file() {
+        let mut entry = RawPackFileEntry {
+            ty: 2,
+            name: [0; 81],
+            access: FILETIME::default(),
+            create: FILETIME::default(),
+            modify: FILETIME::default(),
+            position: 12345,
+            size: 10000,
+            next_block: 63459,
+            _padding: [0, 0],
+        };
+        entry.name[..6].copy_from_slice(b"foobar");
+        assert_eq!(
+            PackEntry::from_reader(
+                &mut &bytemuck::cast_ref::<_, [u8; PK2_FILE_ENTRY_SIZE]>(&entry)[..]
+            )
+            .unwrap(),
+            PackEntry::File(FileEntry::new_untimed(
+                "foobar".into(),
+                StreamOffset(12345),
+                10000,
+                NonZeroU64::new(63459)
+            ))
+        );
     }
 }

@@ -33,6 +33,7 @@ pub struct RawPackHeader {
 }
 
 #[repr(packed)]
+#[derive(Copy, Clone)]
 pub struct RawPackFileEntry {
     pub ty: u8, //0 = Empty, 1 = Directory, 2  = File
     pub name: [u8; 81],
@@ -44,3 +45,8 @@ pub struct RawPackFileEntry {
     pub next_block: u64,
     pub _padding: [u8; 2],
 }
+
+#[cfg(test)]
+unsafe impl bytemuck::Zeroable for RawPackFileEntry {}
+#[cfg(test)]
+unsafe impl bytemuck::Pod for RawPackFileEntry {}
