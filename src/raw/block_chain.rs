@@ -7,14 +7,13 @@ use crate::constants::*;
 use crate::error::{ChainLookupError, ChainLookupResult};
 use crate::io::RawIo;
 
-/// A collection of [`PackBlock`]s where each blocks next_block field points to
+/// A collection of [`PackBlock`]s where each block's next_block field points to
 /// the following block in the file. A PackBlockChain is never empty.
 pub struct PackBlockChain {
     // (offset, block)
     blocks: Vec<(BlockOffset, PackBlock)>,
 }
 
-#[allow(clippy::len_without_is_empty)]
 impl PackBlockChain {
     #[inline]
     pub fn from_blocks(blocks: Vec<(BlockOffset, PackBlock)>) -> Self {
@@ -58,6 +57,7 @@ impl PackBlockChain {
 
     /// Returns the number of PackBlocks in this chain. This is always >= 1.
     #[inline]
+    #[allow(clippy::len_without_is_empty)] // a block chain is never empty
     pub fn len(&self) -> usize {
         self.blocks.len()
     }
@@ -192,7 +192,7 @@ impl RawIo for PackBlock {
     }
 
     fn to_writer<W: Write>(&self, mut w: W) -> IoResult<()> {
-        self.entries.iter().map(|entry| entry.to_writer(&mut w)).collect()
+        self.entries.iter().try_for_each(|entry| entry.to_writer(&mut w))
     }
 }
 

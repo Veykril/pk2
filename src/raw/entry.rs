@@ -419,10 +419,9 @@ impl RawIo for PackEntry {
                 w.write_u32::<LE>(modify_time.dwLowDateTime)?;
                 w.write_u32::<LE>(modify_time.dwHighDateTime)?;
                 w.write_u64::<LE>(*position)?;
-                w.write_u32::<LE>(if let &PackEntry::File(FileEntry { size, .. }) = self {
-                    size
-                } else {
-                    0
+                w.write_u32::<LE>(match self {
+                    &PackEntry::File(FileEntry { size, .. }) => size,
+                    _ => 0,
                 })?;
                 w.write_u64::<LE>(next_block.map_or(0, NonZeroU64::get))?;
                 w.write_u16::<LE>(0)?;

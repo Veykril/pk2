@@ -1,4 +1,3 @@
-#![warn(clippy::all)]
 #![allow(clippy::match_ref_pats)]
 
 pub mod archive;

@@ -1,4 +1,4 @@
-#![allow(clippy::match_ref_pats)]
+//! File structs representing file entries inside a pk2 archive.
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::SystemTime;
@@ -9,6 +9,7 @@ use crate::raw::block_chain::PackBlockChain;
 use crate::raw::entry::{DirectoryEntry, FileEntry, PackEntry};
 use crate::raw::{ChainIndex, StreamOffset};
 
+/// A read-only file handle.
 pub struct File<'pk2, B = std::fs::File> {
     archive: &'pk2 Pk2<B>,
     // the chain this file resides in
@@ -109,6 +110,7 @@ where
     }
 }
 
+/// A write-able file handle.
 pub struct FileMut<'pk2, B = std::fs::File>
 where
     B: Read + Write + Seek,
