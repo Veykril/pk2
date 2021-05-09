@@ -36,10 +36,7 @@ impl Pk2<stdfs::File> {
     }
 
     pub fn open<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> OpenResult<Self> {
-        let file = stdfs::OpenOptions::new()
-            .write(true)
-            .read(true)
-            .open(path)?;
+        let file = stdfs::OpenOptions::new().write(true).read(true).open(path)?;
         Self::_open_in_impl(file, key)
     }
 
@@ -86,11 +83,7 @@ where
         };
         let block_manager = BlockManager::new(blowfish.as_ref(), &mut stream)?;
 
-        Ok(Pk2 {
-            stream: RefCell::new(stream),
-            blowfish,
-            block_manager,
-        })
+        Ok(Pk2 { stream: RefCell::new(stream), blowfish, block_manager })
     }
 }
 
@@ -114,19 +107,10 @@ where
         header.to_writer(&mut stream)?;
         let mut block = PackBlock::default();
         block[0] = PackEntry::new_directory(PK2_CURRENT_DIR_IDENT, PK2_ROOT_BLOCK, None);
-        crate::io::write_block(
-            blowfish.as_ref(),
-            &mut stream,
-            PK2_ROOT_BLOCK.into(),
-            &block,
-        )?;
+        crate::io::write_block(blowfish.as_ref(), &mut stream, PK2_ROOT_BLOCK.into(), &block)?;
 
         let block_manager = BlockManager::new(blowfish.as_ref(), &mut stream)?;
-        Ok(Pk2 {
-            stream: RefCell::new(stream),
-            blowfish,
-            block_manager,
-        })
+        Ok(Pk2 { stream: RefCell::new(stream), blowfish, block_manager })
     }
 }
 
@@ -148,8 +132,7 @@ impl<B> Pk2<B> {
 
     #[inline(always)]
     fn get_entry_mut(&mut self, chain: ChainIndex, entry: usize) -> Option<&mut PackEntry> {
-        self.get_chain_mut(chain)
-            .and_then(|chain| chain.get_mut(entry))
+        self.get_chain_mut(chain).and_then(|chain| chain.get_mut(entry))
     }
 
     fn root_resolve_path_to_entry_and_parent<P: AsRef<Path>>(
@@ -184,18 +167,16 @@ impl<B> Pk2<B> {
 
     pub fn open_directory<P: AsRef<Path>>(&self, path: P) -> ChainLookupResult<Directory<B>> {
         let path = check_root(path.as_ref())?;
-        let (chain, entry_idx) = match self
-            .block_manager
-            .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, path)
-        {
-            Ok((chain, entry_idx, entry)) => {
-                Self::is_dir(entry)?;
-                (chain, entry_idx)
-            }
-            // path was just root
-            Err(ChainLookupError::InvalidPath) => (PK2_ROOT_BLOCK_VIRTUAL, 0),
-            Err(e) => return Err(e),
-        };
+        let (chain, entry_idx) =
+            match self.block_manager.resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, path) {
+                Ok((chain, entry_idx, entry)) => {
+                    Self::is_dir(entry)?;
+                    (chain, entry_idx)
+                }
+                // path was just root
+                Err(ChainLookupError::InvalidPath) => (PK2_ROOT_BLOCK_VIRTUAL, 0),
+                Err(e) => return Err(e),
+            };
         Ok(Directory::new(self, chain, entry_idx))
     }
 
@@ -367,8 +348,7 @@ where
 
 #[inline]
 fn check_root(path: &Path) -> ChainLookupResult<&Path> {
-    path.strip_prefix("/")
-        .map_err(|_| ChainLookupError::InvalidPath)
+    path.strip_prefix("/").map_err(|_| ChainLookupError::InvalidPath)
 }
 
 #[cfg(test)]

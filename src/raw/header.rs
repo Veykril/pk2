@@ -73,13 +73,7 @@ impl RawIo for PackHeader {
         r.read_exact(&mut verify)?;
         let mut reserved = [0; 205];
         r.read_exact(&mut reserved)?;
-        Ok(PackHeader {
-            signature,
-            version,
-            encrypted,
-            verify,
-            reserved,
-        })
+        Ok(PackHeader { signature, version, encrypted, verify, reserved })
     }
 
     fn to_writer<W: Write>(&self, mut w: W) -> IoResult<()> {
@@ -95,20 +89,14 @@ impl RawIo for PackHeader {
 
 impl fmt::Debug for PackHeader {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let sig_end = self
-            .signature
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or_else(|| self.signature.len());
+        let sig_end =
+            self.signature.iter().position(|&b| b == 0).unwrap_or_else(|| self.signature.len());
         f.debug_struct("PackHeader")
-            .field(
-                "signature",
-                &std::str::from_utf8(&self.signature[..sig_end]),
-            )
+            .field("signature", &std::str::from_utf8(&self.signature[..sig_end]))
             .field("version", &self.version)
             .field("encrypted", &self.encrypted)
-            .field("verify", &"\"omitted\"")
-            .field("reserved", &"\"omitted\"")
+            .field("verify", &"\"...\"")
+            .field("reserved", &"\"...\"")
             .finish()
     }
 }

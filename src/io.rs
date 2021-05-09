@@ -139,15 +139,10 @@ pub fn allocate_new_block_chain<F: io::Seek + io::Write>(
     block[1] = PackEntry::new_directory(PK2_PARENT_DIR_IDENT, current_chain.chain_index(), None);
     write_block(blowfish, &mut stream, new_chain_offset.into(), &block)?;
 
-    let offset = current_chain
-        .stream_offset_for_entry(chain_entry_idx)
-        .unwrap();
+    let offset = current_chain.stream_offset_for_entry(chain_entry_idx).unwrap();
 
     write_entry_at(blowfish, stream, offset, &current_chain[chain_entry_idx])?;
-    Ok(PackBlockChain::from_blocks(vec![(
-        new_chain_offset.into(),
-        block,
-    )]))
+    Ok(PackBlockChain::from_blocks(vec![(new_chain_offset.into(), block)]))
 }
 
 /// Create a new empty [`PackBlock`] at the end of the buffer.

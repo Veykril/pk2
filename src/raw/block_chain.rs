@@ -45,13 +45,9 @@ impl PackBlockChain {
     /// Returns the file offset of the entry at the given idx in this block
     /// chain.
     pub fn stream_offset_for_entry(&self, idx: usize) -> Option<EntryOffset> {
-        self.blocks
-            .get(idx / PK2_FILE_BLOCK_ENTRY_COUNT)
-            .map(|(BlockOffset(offset), _)| {
-                EntryOffset(
-                    offset + (PK2_FILE_ENTRY_SIZE * (idx % PK2_FILE_BLOCK_ENTRY_COUNT)) as u64,
-                )
-            })
+        self.blocks.get(idx / PK2_FILE_BLOCK_ENTRY_COUNT).map(|(BlockOffset(offset), _)| {
+            EntryOffset(offset + (PK2_FILE_ENTRY_SIZE * (idx % PK2_FILE_BLOCK_ENTRY_COUNT)) as u64)
+        })
     }
 
     /// Returns the number of PackEntries in this chain.
@@ -86,9 +82,7 @@ impl PackBlockChain {
 
     /// An iterator over the entries of this chain.
     pub fn entries_mut(&mut self) -> impl Iterator<Item = &mut PackEntry> {
-        self.blocks
-            .iter_mut()
-            .flat_map(|block| &mut block.1.entries)
+        self.blocks.iter_mut().flat_map(|block| &mut block.1.entries)
     }
 
     /// Get the PackEntry at the specified offset.
@@ -198,10 +192,7 @@ impl RawIo for PackBlock {
     }
 
     fn to_writer<W: Write>(&self, mut w: W) -> IoResult<()> {
-        self.entries
-            .iter()
-            .map(|entry| entry.to_writer(&mut w))
-            .collect()
+        self.entries.iter().map(|entry| entry.to_writer(&mut w)).collect()
     }
 }
 

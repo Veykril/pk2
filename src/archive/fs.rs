@@ -20,12 +20,7 @@ pub struct File<'pk2, B = std::fs::File> {
 
 impl<'pk2, B> File<'pk2, B> {
     pub(super) fn new(archive: &'pk2 Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
-        File {
-            archive,
-            chain,
-            entry_index,
-            seek_pos: 0,
-        }
+        File { archive, chain, entry_index, seek_pos: 0 }
     }
 
     pub fn modify_time(&self) -> Option<SystemTime> {
@@ -94,10 +89,7 @@ where
         let pos_data = self.entry().pos_data();
         let rem_len = self.remaining_len();
         if buf.len() < rem_len {
-            Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "failed to fill whole buffer",
-            ))
+            Err(io::Error::new(io::ErrorKind::UnexpectedEof, "failed to fill whole buffer"))
         } else {
             crate::io::read_at(
                 &mut *self.archive.stream.borrow_mut(),
@@ -134,12 +126,7 @@ where
     B: Read + Write + Seek,
 {
     pub(super) fn new(archive: &'pk2 mut Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
-        FileMut {
-            archive,
-            chain,
-            entry_index,
-            data: Cursor::new(Vec::new()),
-        }
+        FileMut { archive, chain, entry_index, data: Cursor::new(Vec::new()) }
     }
 
     pub fn modify_time(&self) -> Option<SystemTime> {
@@ -268,10 +255,7 @@ where
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.try_fetch_data()?;
         let len = self.data.get_ref().len();
-        match len
-            .checked_add(buf.len())
-            .map(|new_len| new_len.checked_sub(u32::MAX as usize))
-        {
+        match len.checked_add(buf.len()).map(|new_len| new_len.checked_sub(u32::MAX as usize)) {
             // data + buf < u32::MAX
             Some(None) | Some(Some(0)) => self.data.write(buf),
             // data + buf > u32::MAX, truncate buf
@@ -286,19 +270,11 @@ where
             return Ok(()); // nothing to write
         }
         self.set_modify_time(SystemTime::now());
-        let chain = self
-            .archive
-            .block_manager
-            .get_mut(self.chain)
-            .expect("invalid chain");
-        let entry_offset = chain
-            .stream_offset_for_entry(self.entry_index)
-            .expect("invalid entry");
+        let chain = self.archive.block_manager.get_mut(self.chain).expect("invalid chain");
+        let entry_offset = chain.stream_offset_for_entry(self.entry_index).expect("invalid entry");
 
         let entry = chain.get_mut(self.entry_index).expect("invalid entry");
-        let fentry = entry
-            .as_file_mut()
-            .expect("invalid file object, this is a bug");
+        let fentry = entry.as_file_mut().expect("invalid file object, this is a bug");
 
         let stream = &mut *self.archive.stream.borrow_mut();
         let data = &self.data.get_ref()[..];
@@ -383,11 +359,7 @@ pub struct Directory<'pk2, B = std::fs::File> {
 
 impl<'pk2, B> Directory<'pk2, B> {
     pub(super) fn new(archive: &'pk2 Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
-        Directory {
-            archive,
-            chain,
-            entry_index,
-        }
+        Directory { archive, chain, entry_index }
     }
 
     #[inline]
@@ -434,11 +406,7 @@ impl<'pk2, B> Directory<'pk2, B> {
             .block_manager
             .resolve_path_to_entry_and_parent(self.chain, path.as_ref())?;
 
-        if entry
-            .as_directory()
-            .map(DirectoryEntry::is_normal_link)
-            .unwrap_or(false)
-        {
+        if entry.as_directory().map(DirectoryEntry::is_normal_link).unwrap_or(false) {
             Ok(Directory::new(self.archive, chain, entry_idx))
         } else {
             Err(ChainLookupError::NotFound)

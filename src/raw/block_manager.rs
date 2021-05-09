@@ -103,10 +103,7 @@ impl BlockManager {
         if let Some(c) = components.next_back() {
             let parent_index =
                 self.resolve_path_to_block_chain_index_at(current_chain, components.as_path())?;
-            let name = c
-                .as_os_str()
-                .to_str()
-                .ok_or(ChainLookupError::InvalidPath)?;
+            let name = c.as_os_str().to_str().ok_or(ChainLookupError::InvalidPath)?;
             Ok((parent_index, name))
         } else {
             Err(ChainLookupError::InvalidPath)
@@ -121,17 +118,16 @@ impl BlockManager {
         current_chain: ChainIndex,
         path: &Path,
     ) -> ChainLookupResult<(ChainIndex, usize, &PackEntry)> {
-        self.resolve_path_to_parent(current_chain, path)
-            .and_then(|(parent_index, name)| {
-                self.chains
-                    .get(&parent_index)
-                    .ok_or(ChainLookupError::InvalidChainIndex)?
-                    .entries()
-                    .enumerate()
-                    .find(|(_, entry)| entry.name_eq_ignore_ascii_case(name))
-                    .ok_or(ChainLookupError::NotFound)
-                    .map(|(idx, entry)| (parent_index, idx, entry))
-            })
+        self.resolve_path_to_parent(current_chain, path).and_then(|(parent_index, name)| {
+            self.chains
+                .get(&parent_index)
+                .ok_or(ChainLookupError::InvalidChainIndex)?
+                .entries()
+                .enumerate()
+                .find(|(_, entry)| entry.name_eq_ignore_ascii_case(name))
+                .ok_or(ChainLookupError::NotFound)
+                .map(|(idx, entry)| (parent_index, idx, entry))
+        })
     }
 
     pub fn resolve_path_to_entry_and_parent_mut(
@@ -139,17 +135,16 @@ impl BlockManager {
         current_chain: ChainIndex,
         path: &Path,
     ) -> ChainLookupResult<(ChainIndex, usize, &mut PackEntry)> {
-        self.resolve_path_to_parent(current_chain, path)
-            .and_then(move |(parent_index, name)| {
-                self.chains
-                    .get_mut(&parent_index)
-                    .ok_or(ChainLookupError::InvalidChainIndex)?
-                    .entries_mut()
-                    .enumerate()
-                    .find(|(_, entry)| entry.name_eq_ignore_ascii_case(name))
-                    .ok_or(ChainLookupError::NotFound)
-                    .map(|(idx, entry)| (parent_index, idx, entry))
-            })
+        self.resolve_path_to_parent(current_chain, path).and_then(move |(parent_index, name)| {
+            self.chains
+                .get_mut(&parent_index)
+                .ok_or(ChainLookupError::InvalidChainIndex)?
+                .entries_mut()
+                .enumerate()
+                .find(|(_, entry)| entry.name_eq_ignore_ascii_case(name))
+                .ok_or(ChainLookupError::NotFound)
+                .map(|(idx, entry)| (parent_index, idx, entry))
+        })
     }
 
     /// Resolves a path to a [`PackBlockChain`] index starting from the given
@@ -160,10 +155,7 @@ impl BlockManager {
         path: &Path,
     ) -> ChainLookupResult<ChainIndex> {
         path.components().try_fold(current_chain, |idx, component| {
-            let comp = component
-                .as_os_str()
-                .to_str()
-                .ok_or(ChainLookupError::InvalidPath)?;
+            let comp = component.as_os_str().to_str().ok_or(ChainLookupError::InvalidPath)?;
             self.chains
                 .get(&idx)
                 .ok_or(ChainLookupError::InvalidChainIndex)?
@@ -183,10 +175,7 @@ impl BlockManager {
     {
         let mut components = path.components().peekable();
         while let Some(component) = components.peek() {
-            let name = component
-                .as_os_str()
-                .to_str()
-                .ok_or(ChainLookupError::InvalidPath)?;
+            let name = component.as_os_str().to_str().ok_or(ChainLookupError::InvalidPath)?;
             match self
                 .chains
                 .get(&chain)

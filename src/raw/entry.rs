@@ -287,9 +287,7 @@ impl PackEntry {
     }
 
     pub fn name_eq_ignore_ascii_case(&self, other: &str) -> bool {
-        self.name()
-            .map(|this| this.eq_ignore_ascii_case(other))
-            .unwrap_or(false)
+        self.name().map(|this| this.eq_ignore_ascii_case(other)).unwrap_or(false)
     }
 
     #[inline]
@@ -328,14 +326,9 @@ impl RawIo for PackEntry {
                 let name = {
                     let mut buf = [0; 81];
                     r.read_exact(&mut buf)?;
-                    let end = buf
-                        .iter()
-                        .position(|b| *b == 0)
-                        .unwrap_or_else(|| buf.len());
+                    let end = buf.iter().position(|b| *b == 0).unwrap_or_else(|| buf.len());
                     #[cfg(feature = "euc-kr")]
-                    let name = encoding_rs::EUC_KR
-                        .decode_without_bom_handling(&buf[..end])
-                        .0;
+                    let name = encoding_rs::EUC_KR.decode_without_bom_handling(&buf[..end]).0;
                     #[cfg(not(feature = "euc-kr"))]
                     let name = String::from_utf8_lossy(&buf[..end]);
                     name.into_owned().into_boxed_str()
@@ -455,10 +448,7 @@ mod test {
     #[test]
     fn pack_entry_read_empty() {
         let mut buf = [0u8; PK2_FILE_ENTRY_SIZE];
-        assert_eq!(
-            PackEntry::from_reader(&mut &buf[..]).unwrap(),
-            PackEntry::new_empty(None)
-        );
+        assert_eq!(PackEntry::from_reader(&mut &buf[..]).unwrap(), PackEntry::new_empty(None));
         buf[PK2_FILE_ENTRY_SIZE - 10..][..8].copy_from_slice(&u64::to_le_bytes(1337));
 
         assert_eq!(
