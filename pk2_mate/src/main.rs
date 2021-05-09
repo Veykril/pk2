@@ -25,6 +25,15 @@ fn main() {
     }
 }
 
+fn key_arg() -> Arg<'static, 'static> {
+    Arg::with_name("key")
+        .short("k")
+        .long("key")
+        .takes_value(true)
+        .env("PK2_BLOWFISH_KEY")
+        .default_value("169841")
+}
+
 fn extract_app() -> App<'static, 'static> {
     SubCommand::with_name("extract")
         .version(crate_version!())
@@ -38,14 +47,7 @@ fn extract_app() -> App<'static, 'static> {
                 .takes_value(true)
                 .help("Sets the archive to open"),
         )
-        .arg(
-            Arg::with_name("key")
-                .short("k")
-                .long("key")
-                .takes_value(true)
-                .default_value("169841")
-                .help("Sets the blowfish key"),
-        )
+        .arg(key_arg().help("Sets the blowfish key"))
         .arg(
             Arg::with_name("out")
                 .short("o")
@@ -121,14 +123,7 @@ fn repack_app() -> App<'static, 'static> {
                 .takes_value(true)
                 .help("Sets the archive to open"),
         )
-        .arg(
-            Arg::with_name("key")
-                .short("k")
-                .long("key")
-                .takes_value(true)
-                .default_value("169841")
-                .help("Sets the blowfish key for the input archive"),
-        )
+        .arg(key_arg().help("Sets the blowfish key for the input archive"))
         .arg(
             Arg::with_name("packkey")
                 .short("p")
@@ -147,11 +142,8 @@ fn repack_app() -> App<'static, 'static> {
 
 fn repack(matches: &ArgMatches<'static>) {
     let key = matches.value_of("key").unwrap().as_bytes();
-    let packkey = matches
-        .value_of("packkey")
-        .or_else(|| matches.value_of("key"))
-        .unwrap()
-        .as_bytes();
+    let packkey =
+        matches.value_of("packkey").or_else(|| matches.value_of("key")).unwrap().as_bytes();
     let archive_path = matches.value_of_os("archive").map(Path::new).unwrap();
     let out_archive_path = matches
         .value_of_os("out")
@@ -199,14 +191,7 @@ fn pack_app() -> App<'static, 'static> {
                 .takes_value(true)
                 .help("Sets the directory to pack"),
         )
-        .arg(
-            Arg::with_name("key")
-                .short("k")
-                .long("key")
-                .takes_value(true)
-                .default_value("169841")
-                .help("Sets the blowfish key for the resulting archive"),
-        )
+        .arg(key_arg().help("Sets the blowfish key for the resulting archive"))
         .arg(
             Arg::with_name("archive")
                 .short("a")
@@ -267,20 +252,8 @@ fn list_app() -> App<'static, 'static> {
                 .takes_value(true)
                 .help("Sets the archive to open"),
         )
-        .arg(
-            Arg::with_name("key")
-                .short("k")
-                .long("key")
-                .takes_value(true)
-                .default_value("169841")
-                .help("Sets the blowfish key"),
-        )
-        .arg(
-            Arg::with_name("time")
-                .short("t")
-                .long("time")
-                .help("If passed, shows file times"),
-        )
+        .arg(key_arg().help("Sets the blowfish key"))
+        .arg(Arg::with_name("time").short("t").long("time").help("If passed, shows file times"))
 }
 
 fn list(matches: &ArgMatches<'static>) {
