@@ -1,4 +1,5 @@
 //! File structs representing file entries inside a pk2 archive.
+use std::hash::Hash;
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::SystemTime;
@@ -442,5 +443,26 @@ impl<'pk2, B> Directory<'pk2, B> {
             .entries()
             .enumerate()
             .flat_map(move |(idx, entry)| DirEntry::from(entry, archive, chain, idx))
+    }
+}
+
+impl<B> Hash for Directory<'_, B> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.chain.0);
+        state.write_usize(self.entry_index);
+    }
+}
+
+impl<B: Read> Hash for File<'_, B> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.chain.0);
+        state.write_usize(self.entry_index);
+    }
+}
+
+impl<B: Read + Write + Seek> Hash for FileMut<'_, B> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.chain.0);
+        state.write_usize(self.entry_index);
     }
 }
