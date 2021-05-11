@@ -42,12 +42,12 @@ impl<'pk2, B> File<'pk2, B> {
     }
 
     #[inline]
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &'pk2 str {
         self.entry().name()
     }
 
     #[inline]
-    fn entry(&self) -> &FileEntry {
+    fn entry(&self) -> &'pk2 FileEntry {
         self.archive
             .get_entry(self.chain, self.entry_index)
             .and_then(PackEntry::as_file)
@@ -366,7 +366,7 @@ impl<'pk2, B> Directory<'pk2, B> {
     }
 
     #[inline]
-    fn entry(&self) -> &DirectoryEntry {
+    fn entry(&self) -> &'pk2 DirectoryEntry {
         self.archive
             .get_entry(self.chain, self.entry_index)
             .and_then(PackEntry::as_directory)
@@ -379,7 +379,7 @@ impl<'pk2, B> Directory<'pk2, B> {
         self.archive.get_chain(chain).expect("invalid dir object")
     }
 
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &'pk2 str {
         self.entry().name()
     }
 
