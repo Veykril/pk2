@@ -11,7 +11,7 @@ use crate::io::RawIo;
 use crate::Blowfish;
 
 pub mod fs;
-use self::fs::{DirEntry, Directory, File, FileMut};
+use self::fs::{Directory, File, FileMut};
 
 use crate::raw::block_chain::{PackBlock, PackBlockChain};
 use crate::raw::block_manager::BlockManager;
@@ -180,43 +180,19 @@ impl<B> Pk2<B> {
         Ok(Directory::new(self, chain, entry_idx))
     }
 
+    pub fn open_root_dir(&self) -> Directory<B> {
+        Directory::new(self, PK2_ROOT_BLOCK_VIRTUAL, 0)
+    }
+
     /// Invokes cb on every file in the sub directories of `base`, including
     /// files inside of its subdirectories. Cb gets invoked with its
     /// relative path to `base` and the file object.
-    // Todo, replace this with a file_paths iterator once generators are stable
     pub fn for_each_file(
         &self,
         base: impl AsRef<Path>,
-        mut cb: impl FnMut(&Path, File<B>) -> io::Result<()>,
+        cb: impl FnMut(&Path, File<B>) -> io::Result<()>,
     ) -> io::Result<()> {
-        let mut path = std::path::PathBuf::new();
-        let mut stack = vec![self.open_directory(base)?];
-        let mut first_iteration = true;
-        while let Some(dir) = stack.pop() {
-            if !first_iteration {
-                path.push(dir.name());
-            } else {
-                first_iteration = false;
-            };
-            let mut files_only = true;
-            for entry in dir.entries() {
-                match entry {
-                    DirEntry::Directory(dir) => {
-                        stack.push(dir);
-                        files_only = false;
-                    }
-                    DirEntry::File(file) => {
-                        path.push(file.name());
-                        cb(&path, file)?;
-                        path.pop();
-                    }
-                }
-            }
-            if files_only {
-                path.pop();
-            }
-        }
-        Ok(())
+        self.open_directory(base)?.for_each_file(cb)
     }
 }
 
@@ -310,7 +286,7 @@ where
                         write_chain_entry(
                             blowfish,
                             &mut stream,
-                            &current_chain,
+                            current_chain,
                             chain_entry_idx - 1,
                         )?;
                         chain_entry_idx

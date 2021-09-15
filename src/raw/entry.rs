@@ -322,7 +322,7 @@ impl RawIo for PackEntry {
                 r.read_u16::<LE>()?;
                 Ok(PackEntry::new_empty(next_block))
             }
-            ty @ 1 | ty @ 2 => {
+            ty @ (1 | 2) => {
                 let name = {
                     let mut buf = [0; 81];
                     r.read_exact(&mut buf)?;

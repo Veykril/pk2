@@ -1,6 +1,7 @@
 //! File structs representing file entries inside a pk2 archive.
 use std::hash::Hash;
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
+use std::mem;
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -18,6 +19,13 @@ pub struct File<'pk2, B = std::fs::File> {
     // the index of this file in the chain
     entry_index: usize,
     seek_pos: u64,
+}
+
+impl<'pk2, B> Copy for File<'pk2, B> {}
+impl<'pk2, B> Clone for File<'pk2, B> {
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 impl<'pk2, B> File<'pk2, B> {
@@ -333,6 +341,13 @@ pub enum DirEntry<'pk2, B> {
     File(File<'pk2, B>),
 }
 
+impl<'pk2, B> Copy for DirEntry<'pk2, B> {}
+impl<'pk2, B> Clone for DirEntry<'pk2, B> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
 impl<'pk2, B> DirEntry<'pk2, B> {
     fn from(
         entry: &PackEntry,
@@ -358,6 +373,13 @@ pub struct Directory<'pk2, B = std::fs::File> {
     archive: &'pk2 Pk2<B>,
     chain: ChainIndex,
     entry_index: usize,
+}
+
+impl<'pk2, B> Copy for Directory<'pk2, B> {}
+impl<'pk2, B> Clone for Directory<'pk2, B> {
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 impl<'pk2, B> Directory<'pk2, B> {
@@ -422,6 +444,42 @@ impl<'pk2, B> Directory<'pk2, B> {
             .block_manager
             .resolve_path_to_entry_and_parent(self.chain, path.as_ref())?;
         DirEntry::from(entry, self.archive, chain, entry_idx).ok_or(ChainLookupError::NotFound)
+    }
+
+    /// Invokes cb on every file in this directory and its children
+    /// The callback gets invoked with its relative path to `base` and the file object.
+    // Todo, replace this with a file_paths iterator once generators are stable
+    pub fn for_each_file(
+        &self,
+        mut cb: impl FnMut(&Path, File<B>) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let mut path = std::path::PathBuf::new();
+        let mut stack = vec![*self];
+        let mut first_iteration = true;
+
+        while let Some(dir) = stack.pop() {
+            if !mem::take(&mut first_iteration) {
+                path.push(dir.name());
+            };
+            let mut dir_done = true;
+            for entry in dir.entries() {
+                match entry {
+                    DirEntry::Directory(dir) => {
+                        stack.push(dir);
+                        dir_done = false;
+                    }
+                    DirEntry::File(file) => {
+                        path.push(file.name());
+                        cb(&path, file)?;
+                        path.pop();
+                    }
+                }
+            }
+            if dir_done {
+                path.pop();
+            }
+        }
+        Ok(())
     }
 
     /// Returns an iterator over all files in this directory.
