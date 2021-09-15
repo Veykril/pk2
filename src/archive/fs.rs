@@ -49,12 +49,10 @@ impl<'pk2, B> File<'pk2, B> {
         self.entry().size
     }
 
-    #[inline]
     pub fn name(&self) -> &'pk2 str {
         self.entry().name()
     }
 
-    #[inline]
     fn entry(&self) -> &'pk2 FileEntry {
         self.archive
             .get_entry(self.chain, self.entry_index)
@@ -62,7 +60,6 @@ impl<'pk2, B> File<'pk2, B> {
             .expect("invalid file object")
     }
 
-    #[inline]
     fn remaining_len(&self) -> usize {
         (self.entry().size() as u64 - self.seek_pos) as usize
     }
@@ -182,12 +179,10 @@ where
         res
     }
 
-    #[inline]
     pub fn name(&self) -> &str {
         self.entry().name()
     }
 
-    #[inline]
     fn entry(&self) -> &FileEntry {
         self.archive
             .get_entry(self.chain, self.entry_index)
@@ -195,7 +190,6 @@ where
             .expect("invalid file object")
     }
 
-    #[inline]
     fn entry_mut(&mut self) -> &mut FileEntry {
         self.archive
             .get_entry_mut(self.chain, self.entry_index)
@@ -214,7 +208,6 @@ where
         )
     }
 
-    #[inline]
     fn try_fetch_data(&mut self) -> io::Result<()> {
         if self.data.get_ref().is_empty() && self.entry().size() > 0 {
             self.fetch_data()
@@ -387,7 +380,6 @@ impl<'pk2, B> Directory<'pk2, B> {
         Directory { archive, chain, entry_index }
     }
 
-    #[inline]
     fn entry(&self) -> &'pk2 DirectoryEntry {
         self.archive
             .get_entry(self.chain, self.entry_index)
@@ -396,7 +388,6 @@ impl<'pk2, B> Directory<'pk2, B> {
     }
 
     // returns the chain this folder represents
-    #[inline]
     fn dir_chain(&self, chain: ChainIndex) -> &'pk2 PackBlockChain {
         self.archive.get_chain(chain).expect("invalid dir object")
     }

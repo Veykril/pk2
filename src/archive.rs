@@ -115,22 +115,18 @@ where
 }
 
 impl<B> Pk2<B> {
-    #[inline(always)]
     fn get_chain(&self, chain: ChainIndex) -> Option<&PackBlockChain> {
         self.block_manager.get(chain)
     }
 
-    #[inline(always)]
     fn get_chain_mut(&mut self, chain: ChainIndex) -> Option<&mut PackBlockChain> {
         self.block_manager.get_mut(chain)
     }
 
-    #[inline(always)]
     fn get_entry(&self, chain: ChainIndex, entry: usize) -> Option<&PackEntry> {
         self.get_chain(chain).and_then(|chain| chain.get(entry))
     }
 
-    #[inline(always)]
     fn get_entry_mut(&mut self, chain: ChainIndex, entry: usize) -> Option<&mut PackEntry> {
         self.get_chain_mut(chain).and_then(|chain| chain.get_mut(entry))
     }
@@ -322,7 +318,6 @@ where
     }
 }
 
-#[inline]
 fn check_root(path: &Path) -> ChainLookupResult<&Path> {
     path.strip_prefix("/").map_err(|_| ChainLookupError::InvalidPath)
 }

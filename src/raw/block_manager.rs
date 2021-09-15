@@ -77,18 +77,15 @@ impl BlockManager {
         Ok(PackBlockChain::from_blocks(blocks))
     }
 
-    #[inline]
     pub fn get(&self, chain: ChainIndex) -> Option<&PackBlockChain> {
         self.chains.get(&chain)
     }
 
-    #[inline]
     pub fn get_mut(&mut self, chain: ChainIndex) -> Option<&mut PackBlockChain> {
         assert_ne!(chain, PK2_ROOT_BLOCK_VIRTUAL);
         self.chains.get_mut(&chain)
     }
 
-    #[inline]
     pub fn insert(&mut self, chain: ChainIndex, block: PackBlockChain) {
         self.chains.insert(chain, block);
     }
@@ -222,7 +219,7 @@ impl BlockManager {
 struct NoHashHasherBuilder;
 impl std::hash::BuildHasher for NoHashHasherBuilder {
     type Hasher = NoHashHasher;
-    #[inline]
+    #[inline(always)]
     fn build_hasher(&self) -> Self::Hasher {
         NoHashHasher(0)
     }
@@ -230,17 +227,16 @@ impl std::hash::BuildHasher for NoHashHasherBuilder {
 
 struct NoHashHasher(u64);
 impl std::hash::Hasher for NoHashHasher {
-    #[inline]
+    #[inline(always)]
     fn finish(&self) -> u64 {
         self.0
     }
 
-    #[inline]
     fn write(&mut self, _: &[u8]) {
         panic!("ChainIndex has been hashed wrong. This is a bug!");
     }
 
-    #[inline]
+    #[inline(always)]
     fn write_u64(&mut self, chain: u64) {
         self.0 = chain;
     }

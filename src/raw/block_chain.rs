@@ -15,19 +15,16 @@ pub struct PackBlockChain {
 }
 
 impl PackBlockChain {
-    #[inline]
     pub fn from_blocks(blocks: Vec<(BlockOffset, PackBlock)>) -> Self {
         debug_assert!(!blocks.is_empty());
         PackBlockChain { blocks }
     }
 
-    #[inline]
     pub fn push_and_link(&mut self, offset: BlockOffset, block: PackBlock) {
         self.last_entry_mut().set_next_block(offset);
         self.blocks.push((offset, block));
     }
 
-    #[inline]
     pub fn pop_and_unlink(&mut self) {
         self.blocks.pop();
         assert!(!self.blocks.is_empty());
@@ -36,7 +33,6 @@ impl PackBlockChain {
 
     /// This blockchains chain index/file offset.
     /// Note: This is the same as its first block
-    #[inline]
     pub fn chain_index(&self) -> ChainIndex {
         ChainIndex((self.blocks[0].0).0)
     }
@@ -50,26 +46,22 @@ impl PackBlockChain {
     }
 
     /// Returns the number of PackEntries in this chain.
-    #[inline]
     pub fn num_entries(&self) -> usize {
         self.blocks.len() * PK2_FILE_BLOCK_ENTRY_COUNT
     }
 
     /// Returns the number of PackBlocks in this chain. This is always >= 1.
-    #[inline]
     #[allow(clippy::len_without_is_empty)] // a block chain is never empty
     pub fn len(&self) -> usize {
         self.blocks.len()
     }
 
     /// Returns the last entry of this PackBlockChain.
-    #[inline]
     pub fn last_entry(&self) -> &PackEntry {
         &self[self.num_entries() - 1]
     }
 
     /// Returns the last entry of this PackBlockChain.
-    #[inline]
     pub fn last_entry_mut(&mut self) -> &mut PackEntry {
         let last = self.num_entries() - 1;
         &mut self[last]
@@ -103,7 +95,6 @@ impl PackBlockChain {
         self.get_mut(entry).map(PackEntry::clear)
     }
 
-    #[inline]
     pub fn contains_entry_index(&self, entry: usize) -> bool {
         entry < self.num_entries()
     }
@@ -161,22 +152,18 @@ pub struct PackBlock {
 }
 
 impl PackBlock {
-    #[inline]
     pub fn entries(&self) -> std::slice::Iter<PackEntry> {
         self.entries.iter()
     }
 
-    #[inline]
     pub fn entries_mut(&mut self) -> std::slice::IterMut<PackEntry> {
         self.entries.iter_mut()
     }
 
-    #[inline]
     pub fn get(&self, entry: usize) -> Option<&PackEntry> {
         self.entries.get(entry)
     }
 
-    #[inline]
     pub fn get_mut(&mut self, entry: usize) -> Option<&mut PackEntry> {
         self.entries.get_mut(entry)
     }
@@ -198,14 +185,12 @@ impl RawIo for PackBlock {
 
 impl ops::Index<usize> for PackBlock {
     type Output = PackEntry;
-    #[inline]
     fn index(&self, idx: usize) -> &Self::Output {
         &self.entries[idx]
     }
 }
 
 impl ops::IndexMut<usize> for PackBlock {
-    #[inline]
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
         &mut self.entries[idx]
     }

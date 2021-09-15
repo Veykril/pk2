@@ -44,7 +44,6 @@ pub fn read_at<F: io::Seek + io::Read>(
     stream.read(buf)
 }
 
-#[inline]
 fn stream_len<F: io::Seek>(mut stream: F) -> io::Result<u64> {
     stream.seek(SeekFrom::End(0))
 }
@@ -81,7 +80,6 @@ pub fn write_entry_at<F: io::Seek + io::Write>(
 
 /// Write/Update a chain's entry at the given chain offset and entry index in
 /// the file.
-#[inline]
 pub fn write_chain_entry<F: io::Seek + io::Write>(
     bf: Option<&Blowfish>,
     stream: F,

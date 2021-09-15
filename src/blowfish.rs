@@ -57,7 +57,7 @@ impl Blowfish {
             .for_each(|data| self.decrypt_block(data.try_into().unwrap_or_else(|_| unreachable!())))
     }
 
-    #[inline]
+    #[inline(always)]
     fn encrypt_block(&self, block: &mut [u8; 8]) {
         let l = LE::read_u32(&block[..4]);
         let r = LE::read_u32(&block[4..]);
@@ -66,7 +66,7 @@ impl Blowfish {
         LE::write_u32(&mut block[4..], r);
     }
 
-    #[inline]
+    #[inline(always)]
     fn decrypt_block(&self, block: &mut [u8; 8]) {
         let l = LE::read_u32(&block[..4]);
         let r = LE::read_u32(&block[4..]);

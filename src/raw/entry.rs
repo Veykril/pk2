@@ -16,7 +16,6 @@ pub struct EmptyEntry {
 }
 
 impl EmptyEntry {
-    #[inline]
     fn new(next_block: Option<NonZeroU64>) -> Self {
         EmptyEntry { next_block }
     }
@@ -61,7 +60,6 @@ impl DirectoryEntry {
         }
     }
 
-    #[inline]
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -78,27 +76,22 @@ impl DirectoryEntry {
         self.modify_time.into_systime()
     }
 
-    #[inline]
     pub fn children_position(&self) -> ChainIndex {
         self.pos_children
     }
 
-    #[inline]
     pub fn next_block(&self) -> Option<NonZeroU64> {
         self.next_block
     }
 
-    #[inline]
     pub fn is_current_link(&self) -> bool {
         self.name() == PK2_CURRENT_DIR_IDENT
     }
 
-    #[inline]
     pub fn is_parent_link(&self) -> bool {
         self.name() == PK2_PARENT_DIR_IDENT
     }
 
-    #[inline]
     pub fn is_normal_link(&self) -> bool {
         !(self.is_current_link() || self.is_parent_link())
     }
@@ -152,7 +145,6 @@ impl FileEntry {
         }
     }
 
-    #[inline]
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -169,17 +161,14 @@ impl FileEntry {
         self.modify_time.into_systime()
     }
 
-    #[inline]
     pub fn pos_data(&self) -> StreamOffset {
         self.pos_data
     }
 
-    #[inline]
     pub fn size(&self) -> u32 {
         self.size
     }
 
-    #[inline]
     pub fn next_block(&self) -> Option<NonZeroU64> {
         self.next_block
     }
@@ -221,7 +210,6 @@ impl PackEntry {
         PackEntry::Empty(EmptyEntry::new(next_block))
     }
 
-    #[inline]
     pub fn as_directory(&self) -> Option<&DirectoryEntry> {
         match self {
             PackEntry::Directory(entry) => Some(entry),
@@ -229,7 +217,6 @@ impl PackEntry {
         }
     }
 
-    #[inline]
     pub fn as_directory_mut(&mut self) -> Option<&mut DirectoryEntry> {
         match self {
             PackEntry::Directory(entry) => Some(entry),
@@ -237,7 +224,6 @@ impl PackEntry {
         }
     }
 
-    #[inline]
     pub fn as_file(&self) -> Option<&FileEntry> {
         match self {
             PackEntry::File(entry) => Some(entry),
@@ -245,7 +231,6 @@ impl PackEntry {
         }
     }
 
-    #[inline]
     pub fn as_file_mut(&mut self) -> Option<&mut FileEntry> {
         match self {
             PackEntry::File(entry) => Some(entry),
@@ -290,17 +275,14 @@ impl PackEntry {
         self.name().map(|this| this.eq_ignore_ascii_case(other)).unwrap_or(false)
     }
 
-    #[inline]
     pub fn is_empty(&self) -> bool {
         matches!(self, PackEntry::Empty(_))
     }
 
-    #[inline]
     pub fn is_file(&self) -> bool {
         matches!(self, PackEntry::File(_))
     }
 
-    #[inline]
     pub fn is_dir(&self) -> bool {
         matches!(self, PackEntry::Directory(_))
     }
