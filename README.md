@@ -1,7 +1,9 @@
 # pk2
 
-[![](https://tokei.rs/b1/github/veykril/pk2)](https://github.com/veykril/pk2)
+[![Crates.io](https://img.shields.io/crates/v/pk2.svg)](https://crates.io/crates/pk2)
+[![Docs.rs](https://docs.rs/pk2/badge.svg)](https://docs.rs/pk2)
 ![CI](https://github.com/veykril/pk2/workflows/CI/badge.svg)
+[![](https://tokei.rs/b1/github/veykril/pk2)](https://github.com/veykril/pk2)
 
 A rust crate for reading and writing Silkroad Online's pk2 format.
 

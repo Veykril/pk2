@@ -3,6 +3,13 @@ name = "pk2"
 version = "0.1.0"
 authors = ["Lukas Wirth <lukastw97@gmail.com>"]
 edition = "2021"
+description = "Crate for interacting with Silkroad Online's pk2 archive format"
+homepage = "https://github.com/veykril/pk2"
+repository = "https://github.com/veykril/pk2"
+license = "MIT"
+readme = "README.md"
+categories = ["encoding", "filesystem", "parser-implementations"]
+exclude = ["pk2_mate/*"]
 
 [dependencies]
 byteorder = "1.4"
