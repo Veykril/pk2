@@ -80,10 +80,6 @@ impl DirectoryEntry {
         self.pos_children
     }
 
-    pub fn next_block(&self) -> Option<NonZeroU64> {
-        self.next_block
-    }
-
     pub fn is_current_link(&self) -> bool {
         self.name() == PK2_CURRENT_DIR_IDENT
     }
@@ -168,10 +164,6 @@ impl FileEntry {
     pub fn size(&self) -> u32 {
         self.size
     }
-
-    pub fn next_block(&self) -> Option<NonZeroU64> {
-        self.next_block
-    }
 }
 
 /// An entry of a [`PackBlock`].
@@ -211,13 +203,6 @@ impl PackEntry {
     }
 
     pub fn as_directory(&self) -> Option<&DirectoryEntry> {
-        match self {
-            PackEntry::Directory(entry) => Some(entry),
-            _ => None,
-        }
-    }
-
-    pub fn as_directory_mut(&mut self) -> Option<&mut DirectoryEntry> {
         match self {
             PackEntry::Directory(entry) => Some(entry),
             _ => None,

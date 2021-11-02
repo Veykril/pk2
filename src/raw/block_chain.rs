@@ -13,6 +13,7 @@ pub struct PackBlockChain {
     blocks: Vec<(BlockOffset, PackBlock)>,
 }
 
+#[allow(dead_code)]
 impl PackBlockChain {
     pub fn from_blocks(blocks: Vec<(BlockOffset, PackBlock)>) -> Self {
         debug_assert!(!blocks.is_empty());
@@ -149,6 +150,7 @@ pub struct PackBlock {
     entries: [PackEntry; PK2_FILE_BLOCK_ENTRY_COUNT],
 }
 
+#[allow(dead_code)]
 impl PackBlock {
     pub fn entries(&self) -> std::slice::Iter<PackEntry> {
         self.entries.iter()

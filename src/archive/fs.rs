@@ -397,15 +397,15 @@ impl<'pk2, B> Directory<'pk2, B> {
     }
 
     pub fn modify_time(&self) -> Option<SystemTime> {
-        self.entry().modify_time.into_systime()
+        self.entry().modify_time()
     }
 
     pub fn access_time(&self) -> Option<SystemTime> {
-        self.entry().access_time.into_systime()
+        self.entry().access_time()
     }
 
     pub fn create_time(&self) -> Option<SystemTime> {
-        self.entry().create_time.into_systime()
+        self.entry().create_time()
     }
 
     pub fn open_file(&self, path: impl AsRef<Path>) -> ChainLookupResult<File<'pk2, B>> {
