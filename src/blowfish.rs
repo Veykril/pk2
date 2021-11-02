@@ -1,5 +1,5 @@
-// based on https://github.com/RustCrypto/block-ciphers
-use std::convert::TryInto;
+// based on https://github.com/RustCrypto/block-ciphers, copied out as their exposed API is rather unwieldy
+use std::fmt;
 
 use byteorder::{ByteOrder, LE};
 
@@ -8,7 +8,6 @@ use crate::constants::PK2_SALT;
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub struct InvalidKey;
 
-use std::fmt;
 impl std::error::Error for InvalidKey {}
 impl fmt::Display for InvalidKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

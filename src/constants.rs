@@ -1,7 +1,7 @@
 //! Magic Numbers and definitions
 use std::mem;
 
-use super::FILETIME;
+use crate::filetime::FILETIME;
 use crate::raw::ChainIndex;
 
 pub const PK2_VERSION: u32 = 0x0100_0002;

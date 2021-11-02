@@ -1,16 +1,15 @@
 use std::io::{Read, Result as IoResult, Write};
 use std::ops;
 
-use super::entry::{DirectoryEntry, PackEntry};
-use super::{BlockOffset, ChainIndex, EntryOffset};
 use crate::constants::*;
 use crate::error::{ChainLookupError, ChainLookupResult};
 use crate::io::RawIo;
+use crate::raw::entry::{DirectoryEntry, PackEntry};
+use crate::raw::{BlockOffset, ChainIndex, EntryOffset};
 
 /// A collection of [`PackBlock`]s where each block's next_block field points to
 /// the following block in the file. A PackBlockChain is never empty.
 pub struct PackBlockChain {
-    // (offset, block)
     blocks: Vec<(BlockOffset, PackBlock)>,
 }
 
@@ -51,7 +50,6 @@ impl PackBlockChain {
     }
 
     /// Returns the number of PackBlocks in this chain. This is always >= 1.
-    #[allow(clippy::len_without_is_empty)] // a block chain is never empty
     pub fn len(&self) -> usize {
         self.blocks.len()
     }

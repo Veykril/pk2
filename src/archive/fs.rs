@@ -261,7 +261,7 @@ where
         let len = self.data.get_ref().len();
         match len.checked_add(buf.len()).map(|new_len| new_len.checked_sub(u32::MAX as usize)) {
             // data + buf < u32::MAX
-            Some(None) | Some(Some(0)) => self.data.write(buf),
+            Some(None | Some(0)) => self.data.write(buf),
             // data + buf > u32::MAX, truncate buf
             Some(Some(slice_overflow)) => self.data.write(&buf[..buf.len() - slice_overflow]),
             // data + buf overflows usize::MAX

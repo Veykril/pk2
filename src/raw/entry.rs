@@ -5,10 +5,10 @@ use std::mem;
 use std::num::NonZeroU64;
 use std::time::SystemTime;
 
-use super::{BlockOffset, ChainIndex, StreamOffset};
 use crate::constants::{PK2_CURRENT_DIR_IDENT, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DIR_IDENT};
+use crate::filetime::FILETIME;
 use crate::io::RawIo;
-use crate::FILETIME;
+use crate::raw::{BlockOffset, ChainIndex, StreamOffset};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct EmptyEntry {
@@ -417,14 +417,11 @@ impl RawIo for PackEntry {
 mod test {
     use std::num::NonZeroU64;
 
-    use crate::FILETIME;
-    use crate::{
-        constants::{RawPackFileEntry, PK2_FILE_ENTRY_SIZE},
-        raw::ChainIndex,
-    };
-    use crate::{io::RawIo, raw::StreamOffset};
-
-    use super::{DirectoryEntry, FileEntry, PackEntry};
+    use crate::constants::{RawPackFileEntry, PK2_FILE_ENTRY_SIZE};
+    use crate::filetime::FILETIME;
+    use crate::io::RawIo;
+    use crate::raw::entry::{DirectoryEntry, FileEntry, PackEntry};
+    use crate::raw::{ChainIndex, StreamOffset};
 
     #[test]
     fn pack_entry_read_empty() {

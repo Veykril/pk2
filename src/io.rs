@@ -4,6 +4,7 @@
 
 use std::io::{self, SeekFrom};
 
+use crate::blowfish::Blowfish;
 use crate::constants::{
     PK2_CURRENT_DIR_IDENT, PK2_FILE_BLOCK_SIZE, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DIR_IDENT,
 };
@@ -11,7 +12,6 @@ use crate::error::OpenResult;
 use crate::raw::block_chain::{PackBlock, PackBlockChain};
 use crate::raw::entry::PackEntry;
 use crate::raw::{BlockOffset, ChainIndex, EntryOffset, StreamOffset};
-use crate::Blowfish;
 
 /// Read a block at a given offset.
 pub fn read_block_at<F: io::Seek + io::Read>(

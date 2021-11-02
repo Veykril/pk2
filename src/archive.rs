@@ -1,21 +1,20 @@
+pub mod fs;
+use self::fs::{Directory, File, FileMut};
+
 use std::cell::RefCell;
 use std::path::{Component, Path};
 use std::{fs as stdfs, io};
 
+use crate::blowfish::Blowfish;
 use crate::constants::{
     PK2_CHECKSUM, PK2_CURRENT_DIR_IDENT, PK2_PARENT_DIR_IDENT, PK2_ROOT_BLOCK,
     PK2_ROOT_BLOCK_VIRTUAL,
 };
 use crate::error::{ChainLookupError, ChainLookupResult, OpenError, OpenResult};
 use crate::io::RawIo;
-use crate::Blowfish;
-
-pub mod fs;
-use self::fs::{Directory, File, FileMut};
-
 use crate::raw::block_chain::{PackBlock, PackBlockChain};
 use crate::raw::block_manager::BlockManager;
-use crate::raw::entry::*;
+use crate::raw::entry::PackEntry;
 use crate::raw::header::PackHeader;
 use crate::raw::{ChainIndex, StreamOffset};
 
@@ -26,6 +25,7 @@ pub struct Pk2<B = stdfs::File> {
 }
 
 impl Pk2<stdfs::File> {
+    /// Creates a new [`File`](stdfs::File) based archive at the given path.
     pub fn create_new<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> OpenResult<Self> {
         let file = stdfs::OpenOptions::new()
             .create_new(true)
@@ -35,11 +35,14 @@ impl Pk2<stdfs::File> {
         Self::_create_impl(file, key)
     }
 
+    /// Opens an archive at the given path.
     pub fn open<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> OpenResult<Self> {
         let file = stdfs::OpenOptions::new().write(true).read(true).open(path)?;
         Self::_open_in_impl(file, key)
     }
 
+    /// Opens an archive at the given path with its file index sorted. This creates a read only
+    /// archive, trying to write to it will result in an error.
     pub fn open_sorted<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> OpenResult<Self> {
         let file = stdfs::OpenOptions::new().read(true).open(path)?;
         let mut this = Self::_open_in_impl(file, key)?;
@@ -49,6 +52,7 @@ impl Pk2<stdfs::File> {
 }
 
 impl Pk2<io::Cursor<Vec<u8>>> {
+    /// Creates a new archive in memory.
     pub fn create_new_in_memory<K: AsRef<[u8]>>(
         key: K,
     ) -> Result<Self, crate::blowfish::InvalidKey> {
@@ -57,6 +61,12 @@ impl Pk2<io::Cursor<Vec<u8>>> {
             // the only error that can actually occur here is an InvalidKey error
             crate::blowfish::InvalidKey
         })
+    }
+}
+
+impl From<Pk2<io::Cursor<Vec<u8>>>> for Vec<u8> {
+    fn from(pk2: Pk2<io::Cursor<Vec<u8>>>) -> Self {
+        pk2.stream.into_inner().into_inner()
     }
 }
 
@@ -139,14 +149,14 @@ impl<B> Pk2<B> {
             .resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, check_root(path.as_ref())?)
     }
 
-    pub(self) fn is_file(entry: &PackEntry) -> ChainLookupResult<()> {
+    fn is_file(entry: &PackEntry) -> ChainLookupResult<()> {
         match entry.is_file() {
             true => Ok(()),
             false => Err(ChainLookupError::ExpectedFile),
         }
     }
 
-    pub(self) fn is_dir(entry: &PackEntry) -> ChainLookupResult<()> {
+    fn is_dir(entry: &PackEntry) -> ChainLookupResult<()> {
         match entry.is_dir() {
             true => Ok(()),
             false => Err(ChainLookupError::ExpectedDirectory),

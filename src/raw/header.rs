@@ -3,10 +3,10 @@ use byteorder::{LittleEndian as LE, ReadBytesExt, WriteBytesExt};
 use std::fmt;
 use std::io::{Read, Result as IoResult, Write};
 
+use crate::blowfish::Blowfish;
 use crate::constants::*;
 use crate::error::{OpenError, OpenResult};
 use crate::io::RawIo;
-use crate::Blowfish;
 
 pub struct PackHeader {
     pub signature: [u8; 30],
@@ -34,10 +34,6 @@ impl PackHeader {
         let _ = bf.encrypt(&mut this.verify);
         this.encrypted = true;
         this
-    }
-
-    pub fn new() -> Self {
-        Default::default()
     }
 
     /// Validate the signature of this header. Returns an error if the version

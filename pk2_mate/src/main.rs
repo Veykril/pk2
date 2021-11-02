@@ -4,8 +4,6 @@ use filetime::FileTime;
 
 use std::path::{Path, PathBuf};
 
-use pk2::archive;
-
 fn main() {
     let app = App::new(crate_name!())
         .version(crate_version!())
@@ -71,20 +69,20 @@ fn extract(matches: &ArgMatches<'static>) {
         .map(PathBuf::from)
         .unwrap_or_else(|| archive_path.with_extension(""));
     let write_times = matches.is_present("time");
-    let archive = archive::Pk2::open(archive_path, key)
+    let archive = pk2::Pk2::open(archive_path, key)
         .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
     let folder = archive.open_directory("/").unwrap();
     println!("Extracting {:?} to {:?}.", archive_path, out_path);
     extract_files(folder, &out_path, write_times);
 }
 
-fn extract_files(folder: archive::fs::Directory<'_>, out_path: &Path, write_times: bool) {
+fn extract_files(folder: pk2::fs::Directory<'_>, out_path: &Path, write_times: bool) {
     use std::io::Read;
     let _ = std::fs::create_dir(out_path);
     let mut buf = Vec::new();
     for entry in folder.entries() {
         match entry {
-            archive::fs::DirEntry::File(mut file) => {
+            pk2::fs::DirEntry::File(mut file) => {
                 file.read_to_end(&mut buf).unwrap();
                 let file_path = out_path.join(file.name());
                 if let Err(e) = std::fs::write(&file_path, &buf) {
@@ -101,7 +99,7 @@ fn extract_files(folder: archive::fs::Directory<'_>, out_path: &Path, write_time
                 }
                 buf.clear();
             }
-            archive::fs::DirEntry::Directory(dir) => {
+            pk2::fs::DirEntry::Directory(dir) => {
                 let dir_name = dir.name();
                 let path = out_path.join(dir_name);
                 extract_files(dir, &path, write_times);
@@ -149,28 +147,28 @@ fn repack(matches: &ArgMatches<'static>) {
         .value_of_os("out")
         .map(PathBuf::from)
         .unwrap_or_else(|| archive_path.with_extension("repack.pk2"));
-    let in_archive = pk2::archive::Pk2::open(archive_path, key)
+    let in_archive = pk2::Pk2::open(archive_path, key)
         .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
-    let mut out_archive = pk2::archive::Pk2::create_new(&out_archive_path, packkey)
+    let mut out_archive = pk2::Pk2::create_new(&out_archive_path, packkey)
         .unwrap_or_else(|_| panic!("failed to create archive at {:?}", out_archive_path));
     let folder = in_archive.open_directory("/").unwrap();
     println!("Repacking {:?} into {:?}.", archive_path, out_archive_path);
     repack_files(&mut out_archive, folder, "/".as_ref());
 }
 
-fn repack_files(out_archive: &mut archive::Pk2, folder: archive::fs::Directory<'_>, path: &Path) {
+fn repack_files(out_archive: &mut pk2::Pk2, folder: pk2::fs::Directory<'_>, path: &Path) {
     use std::io::{Read, Write};
     let mut buf = Vec::new();
     for entry in folder.entries() {
         match entry {
-            archive::fs::DirEntry::File(mut file) => {
+            pk2::fs::DirEntry::File(mut file) => {
                 file.read_to_end(&mut buf).unwrap();
                 let mut out_file = out_archive.create_file(path.join(file.name())).unwrap();
                 out_file.copy_file_times(&file);
                 out_file.write_all(&buf).unwrap();
                 buf.clear();
             }
-            archive::fs::DirEntry::Directory(dir) => {
+            pk2::fs::DirEntry::Directory(dir) => {
                 let path = path.join(dir.name());
                 repack_files(out_archive, dir, &path);
             }
@@ -211,13 +209,13 @@ fn pack(matches: &ArgMatches<'static>) {
     if !input_path.is_dir() {
         return;
     }
-    let mut out_archive = archive::Pk2::create_new(&out_archive_path, key)
+    let mut out_archive = pk2::Pk2::create_new(&out_archive_path, key)
         .unwrap_or_else(|_| panic!("failed to create archive at {:?}", out_archive_path));
     println!("Packing {:?} into {:?}.", input_path, out_archive_path);
     pack_files(&mut out_archive, input_path, input_path);
 }
 
-fn pack_files(out_archive: &mut archive::Pk2, dir_path: &Path, base: &Path) {
+fn pack_files(out_archive: &mut pk2::Pk2, dir_path: &Path, base: &Path) {
     use std::io::{Read, Write};
     let mut buf = Vec::new();
     for entry in std::fs::read_dir(dir_path).unwrap() {
@@ -259,20 +257,20 @@ fn list_app() -> App<'static, 'static> {
 fn list(matches: &ArgMatches<'static>) {
     let key = matches.value_of("key").unwrap().as_bytes();
     let archive_path = matches.value_of_os("archive").map(PathBuf::from).unwrap();
-    let archive = archive::Pk2::open(&archive_path, key)
+    let archive = pk2::Pk2::open(&archive_path, key)
         .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
     let folder = archive.open_directory("/").unwrap();
     list_files(folder, "/".as_ref(), 1);
 }
 
-fn list_files(folder: archive::fs::Directory, path: &Path, ident_level: usize) {
+fn list_files(folder: pk2::fs::Directory, path: &Path, ident_level: usize) {
     println!("{}", path.display());
     for entry in folder.entries() {
         match entry {
-            archive::fs::DirEntry::File(file) => {
+            pk2::fs::DirEntry::File(file) => {
                 println!("{}{}", " ".repeat(ident_level), file.name());
             }
-            archive::fs::DirEntry::Directory(dir) => {
+            pk2::fs::DirEntry::Directory(dir) => {
                 let dir_name = dir.name();
                 let path = path.join(dir_name);
                 list_files(dir, &path, path.as_os_str().len());
