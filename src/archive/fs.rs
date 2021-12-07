@@ -1,18 +1,19 @@
 //! File structs representing file entries inside a pk2 archive.
+use std::cell::RefCell;
 use std::hash::Hash;
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::archive::Pk2;
+use crate::archive::{BufferAccess, Pk2};
 use crate::error::{ChainLookupError, ChainLookupResult};
 use crate::raw::block_chain::PackBlockChain;
 use crate::raw::entry::{DirectoryEntry, FileEntry, PackEntry};
 use crate::raw::{ChainIndex, StreamOffset};
 
-/// A read-only file handle.
-pub struct File<'pk2, B = std::fs::File> {
-    archive: &'pk2 Pk2<B>,
+/// Access read-only file handle.
+pub struct File<'pk2, Buffer, Access> {
+    archive: &'pk2 Pk2<Buffer, Access>,
     // the chain this file resides in
     chain: ChainIndex,
     // the index of this file in the chain
@@ -20,15 +21,19 @@ pub struct File<'pk2, B = std::fs::File> {
     seek_pos: u64,
 }
 
-impl<'pk2, B> Copy for File<'pk2, B> {}
-impl<'pk2, B> Clone for File<'pk2, B> {
+impl<'pk2, Buffer, Access> Copy for File<'pk2, Buffer, Access> {}
+impl<'pk2, Buffer, Access> Clone for File<'pk2, Buffer, Access> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'pk2, B> File<'pk2, B> {
-    pub(super) fn new(archive: &'pk2 Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
+impl<'pk2, Buffer, Access> File<'pk2, Buffer, Access> {
+    pub(super) fn new(
+        archive: &'pk2 Pk2<Buffer, Access>,
+        chain: ChainIndex,
+        entry_index: usize,
+    ) -> Self {
         File { archive, chain, entry_index, seek_pos: 0 }
     }
 
@@ -64,7 +69,7 @@ impl<'pk2, B> File<'pk2, B> {
     }
 }
 
-impl<B> Seek for File<'_, B> {
+impl<Buffer, Access> Seek for File<'_, Buffer, Access> {
     fn seek(&mut self, seek: SeekFrom) -> io::Result<u64> {
         let size = self.entry().size() as u64;
         seek_impl(seek, self.seek_pos, size).map(|new_pos| {
@@ -74,19 +79,18 @@ impl<B> Seek for File<'_, B> {
     }
 }
 
-impl<B> Read for File<'_, B>
+impl<Buffer, Access> Read for File<'_, Buffer, Access>
 where
-    B: Read + Seek,
+    Access: BufferAccess<Buffer>,
+    Buffer: Read + Seek,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let pos_data = self.entry().pos_data();
         let rem_len = self.remaining_len();
         let len = buf.len().min(rem_len);
-        let n = crate::io::read_at(
-            &mut *self.archive.stream.borrow_mut(),
-            pos_data + StreamOffset(self.seek_pos),
-            &mut buf[..len],
-        )?;
+        let n = self.archive.stream.with_mut_buffer(|stream| {
+            crate::io::read_at(stream, pos_data + StreamOffset(self.seek_pos), &mut buf[..len])
+        })?;
         self.seek(SeekFrom::Current(n as i64))?;
         Ok(n)
     }
@@ -97,11 +101,13 @@ where
         if buf.len() < rem_len {
             Err(io::Error::new(io::ErrorKind::UnexpectedEof, "failed to fill whole buffer"))
         } else {
-            crate::io::read_at(
-                &mut *self.archive.stream.borrow_mut(),
-                pos_data + StreamOffset(self.seek_pos),
-                &mut buf[..rem_len],
-            )?;
+            self.archive.stream.with_mut_buffer(|stream| {
+                crate::io::read_at(
+                    stream,
+                    pos_data + StreamOffset(self.seek_pos),
+                    &mut buf[..rem_len],
+                )
+            })?;
             self.seek_pos += rem_len as u64;
             Ok(())
         }
@@ -115,12 +121,13 @@ where
     }
 }
 
-/// A write-able file handle.
-pub struct FileMut<'pk2, B = std::fs::File>
+/// Access write-able file handle.
+pub struct FileMut<'pk2, Buffer, Access>
 where
-    B: Read + Write + Seek,
+    Access: BufferAccess<Buffer>,
+    Buffer: Write + Read + Seek,
 {
-    archive: &'pk2 mut Pk2<B>,
+    archive: &'pk2 mut Pk2<Buffer, Access>,
     // the chain this file resides in
     chain: ChainIndex,
     // the index of this file in the chain
@@ -128,11 +135,16 @@ where
     data: Cursor<Vec<u8>>,
 }
 
-impl<'pk2, B> FileMut<'pk2, B>
+impl<'pk2, Buffer, Access> FileMut<'pk2, Buffer, Access>
 where
-    B: Read + Write + Seek,
+    Access: BufferAccess<Buffer>,
+    Buffer: Read + Write + Seek,
 {
-    pub(super) fn new(archive: &'pk2 mut Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
+    pub(super) fn new(
+        archive: &'pk2 mut Pk2<Buffer, Access>,
+        chain: ChainIndex,
+        entry_index: usize,
+    ) -> Self {
         FileMut { archive, chain, entry_index, data: Cursor::new(Vec::new()) }
     }
 
@@ -160,7 +172,7 @@ where
         self.entry_mut().create_time = time.into();
     }
 
-    pub fn copy_file_times<'a, A>(&mut self, other: &File<'a, A>) {
+    pub fn copy_file_times<'a, Buffer2, Access2>(&mut self, other: &File<'a, Buffer2, Access2>) {
         let this = self.entry_mut();
         let other = other.entry();
         this.modify_time = other.modify_time;
@@ -200,11 +212,9 @@ where
         let pos_data = self.entry().pos_data();
         let size = self.entry().size();
         self.data.get_mut().resize(size as usize, 0);
-        crate::io::read_exact_at(
-            &mut *self.archive.stream.borrow_mut(),
-            pos_data,
-            self.data.get_mut(),
-        )
+        self.archive.stream.with_mut_buffer(|buffer| {
+            crate::io::read_exact_at(buffer, pos_data, self.data.get_mut())
+        })
     }
 
     fn try_fetch_data(&mut self) -> io::Result<()> {
@@ -216,9 +226,10 @@ where
     }
 }
 
-impl<B> Seek for FileMut<'_, B>
+impl<Buffer, Access> Seek for FileMut<'_, Buffer, Access>
 where
-    B: Read + Write + Seek,
+    Access: BufferAccess<Buffer>,
+    Buffer: Read + Write + Seek,
 {
     fn seek(&mut self, seek: SeekFrom) -> io::Result<u64> {
         let size = self.data.get_ref().len().max(self.entry().size() as usize) as u64;
@@ -229,9 +240,10 @@ where
     }
 }
 
-impl<B> Read for FileMut<'_, B>
+impl<Buffer, Access> Read for FileMut<'_, Buffer, Access>
 where
-    B: Read + Write + Seek,
+    Access: BufferAccess<Buffer>,
+    Buffer: Read + Write + Seek,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.try_fetch_data()?;
@@ -251,9 +263,10 @@ where
     }
 }
 
-impl<B> Write for FileMut<'_, B>
+impl<Buffer, Access> Write for FileMut<'_, Buffer, Access>
 where
-    B: Read + Write + Seek,
+    Access: BufferAccess<Buffer>,
+    Buffer: Read + Write + Seek,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.try_fetch_data()?;
@@ -277,29 +290,31 @@ where
         let entry_offset = chain.stream_offset_for_entry(self.entry_index).expect("invalid entry");
 
         let entry = chain.get_mut(self.entry_index).expect("invalid entry");
-        let fentry = entry.as_file_mut().expect("invalid file object, this is a bug");
 
-        let stream = &mut *self.archive.stream.borrow_mut();
         let data = &self.data.get_ref()[..];
         debug_assert!(data.len() <= !0u32 as usize);
         let data_len = data.len() as u32;
-        // new unwritten file/more data than what fits, so use a new block
-        if data_len > fentry.size {
-            // FIXME reuse previous buffer somehow?
-            fentry.pos_data = crate::io::append_data(&mut *stream, data)?;
-        // data fits into the previous buffer space
-        } else {
-            crate::io::write_data_at(&mut *stream, fentry.pos_data, data)?;
-        }
-        fentry.size = data_len;
+        self.archive.stream.with_mut_buffer(|stream| {
+            let fentry = entry.as_file_mut().expect("invalid file object, this is a bug");
+            // new unwritten file/more data than what fits, so use a new block
+            if data_len > fentry.size {
+                // FIXME reuse previous buffer somehow?
+                fentry.pos_data = crate::io::append_data(&mut *stream, data)?;
+            } else {
+                // data fits into the previous buffer space
+                crate::io::write_data_at(&mut *stream, fentry.pos_data, data)?;
+            }
+            fentry.size = data_len;
 
-        crate::io::write_entry_at(self.archive.blowfish.as_ref(), stream, entry_offset, entry)
+            crate::io::write_entry_at(self.archive.blowfish.as_ref(), stream, entry_offset, entry)
+        })
     }
 }
 
-impl<B> Drop for FileMut<'_, B>
+impl<Buffer, Access> Drop for FileMut<'_, Buffer, Access>
 where
-    B: Write + Read + Seek,
+    Access: BufferAccess<Buffer>,
+    Buffer: Write + Read + Seek,
 {
     fn drop(&mut self) {
         let _ = self.flush();
@@ -328,22 +343,22 @@ fn seek_impl(seek: SeekFrom, seek_pos: u64, size: u64) -> io::Result<u64> {
     }
 }
 
-pub enum DirEntry<'pk2, B> {
-    Directory(Directory<'pk2, B>),
-    File(File<'pk2, B>),
+pub enum DirEntry<'pk2, Buffer, Access> {
+    Directory(Directory<'pk2, Buffer, Access>),
+    File(File<'pk2, Buffer, Access>),
 }
 
-impl<'pk2, B> Copy for DirEntry<'pk2, B> {}
-impl<'pk2, B> Clone for DirEntry<'pk2, B> {
+impl<'pk2, Buffer, Access> Copy for DirEntry<'pk2, Buffer, Access> {}
+impl<'pk2, Buffer, Access> Clone for DirEntry<'pk2, Buffer, Access> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'pk2, B> DirEntry<'pk2, B> {
+impl<'pk2, Buffer, Access> DirEntry<'pk2, Buffer, Access> {
     fn from(
         entry: &PackEntry,
-        archive: &'pk2 Pk2<B>,
+        archive: &'pk2 Pk2<Buffer, Access>,
         chain: ChainIndex,
         idx: usize,
     ) -> Option<Self> {
@@ -361,21 +376,25 @@ impl<'pk2, B> DirEntry<'pk2, B> {
     }
 }
 
-pub struct Directory<'pk2, B = std::fs::File> {
-    archive: &'pk2 Pk2<B>,
+pub struct Directory<'pk2, Buffer = std::fs::File, Access = RefCell<std::fs::File>> {
+    archive: &'pk2 Pk2<Buffer, Access>,
     chain: ChainIndex,
     entry_index: usize,
 }
 
-impl<'pk2, B> Copy for Directory<'pk2, B> {}
-impl<'pk2, B> Clone for Directory<'pk2, B> {
+impl<'pk2, Buffer, Access> Copy for Directory<'pk2, Buffer, Access> {}
+impl<'pk2, Buffer, Access> Clone for Directory<'pk2, Buffer, Access> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'pk2, B> Directory<'pk2, B> {
-    pub(super) fn new(archive: &'pk2 Pk2<B>, chain: ChainIndex, entry_index: usize) -> Self {
+impl<'pk2, Buffer, Access> Directory<'pk2, Buffer, Access> {
+    pub(super) fn new(
+        archive: &'pk2 Pk2<Buffer, Access>,
+        chain: ChainIndex,
+        entry_index: usize,
+    ) -> Self {
         Directory { archive, chain, entry_index }
     }
 
@@ -407,15 +426,21 @@ impl<'pk2, B> Directory<'pk2, B> {
         self.entry().create_time()
     }
 
-    pub fn open_file(&self, path: impl AsRef<Path>) -> ChainLookupResult<File<'pk2, B>> {
+    pub fn open_file(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> ChainLookupResult<File<'pk2, Buffer, Access>> {
         let (chain, entry_idx, entry) = self
             .archive
             .block_manager
             .resolve_path_to_entry_and_parent(self.chain, path.as_ref())?;
-        Pk2::<B>::is_file(entry).map(|_| File::new(self.archive, chain, entry_idx))
+        Pk2::<Buffer, Access>::is_file(entry).map(|_| File::new(self.archive, chain, entry_idx))
     }
 
-    pub fn open_directory(&self, path: impl AsRef<Path>) -> ChainLookupResult<Directory<'pk2, B>> {
+    pub fn open_directory(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> ChainLookupResult<Directory<'pk2, Buffer, Access>> {
         let (chain, entry_idx, entry) = self
             .archive
             .block_manager
@@ -428,7 +453,10 @@ impl<'pk2, B> Directory<'pk2, B> {
         }
     }
 
-    pub fn open(&self, path: impl AsRef<Path>) -> ChainLookupResult<DirEntry<'pk2, B>> {
+    pub fn open(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> ChainLookupResult<DirEntry<'pk2, Buffer, Access>> {
         let (chain, entry_idx, entry) = self
             .archive
             .block_manager
@@ -441,7 +469,7 @@ impl<'pk2, B> Directory<'pk2, B> {
     // Todo, replace this with a file_paths iterator once generators are stable
     pub fn for_each_file(
         &self,
-        mut cb: impl FnMut(&Path, File<B>) -> io::Result<()>,
+        mut cb: impl FnMut(&Path, File<Buffer, Access>) -> io::Result<()>,
     ) -> io::Result<()> {
         let mut path = std::path::PathBuf::new();
 
@@ -470,7 +498,7 @@ impl<'pk2, B> Directory<'pk2, B> {
     }
 
     /// Returns an iterator over all files in this directory.
-    pub fn files(&self) -> impl Iterator<Item = File<'pk2, B>> {
+    pub fn files(&self) -> impl Iterator<Item = File<'pk2, Buffer, Access>> {
         let chain = self.entry().children_position();
         let archive = self.archive;
         self.dir_chain(chain)
@@ -481,7 +509,7 @@ impl<'pk2, B> Directory<'pk2, B> {
 
     /// Returns an iterator over all items in this directory excluding `.` and
     /// `..`.
-    pub fn entries(&self) -> impl Iterator<Item = DirEntry<'pk2, B>> {
+    pub fn entries(&self) -> impl Iterator<Item = DirEntry<'pk2, Buffer, Access>> {
         let chain = self.entry().children_position();
         let archive = self.archive;
         self.dir_chain(chain)
@@ -491,21 +519,23 @@ impl<'pk2, B> Directory<'pk2, B> {
     }
 }
 
-impl<B> Hash for Directory<'_, B> {
+impl<Buffer> Hash for Directory<'_, Buffer> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_u64(self.chain.0);
         state.write_usize(self.entry_index);
     }
 }
 
-impl<B: Read> Hash for File<'_, B> {
+impl<Buffer, Access> Hash for File<'_, Buffer, Access> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_u64(self.chain.0);
         state.write_usize(self.entry_index);
     }
 }
 
-impl<B: Read + Write + Seek> Hash for FileMut<'_, B> {
+impl<Buffer: Read + Write + Seek, Access: BufferAccess<Buffer>> Hash
+    for FileMut<'_, Buffer, Access>
+{
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_u64(self.chain.0);
         state.write_usize(self.entry_index);
