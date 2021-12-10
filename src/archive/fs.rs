@@ -519,8 +519,9 @@ impl<'pk2, Buffer, Access> Directory<'pk2, Buffer, Access> {
     }
 }
 
-impl<Buffer> Hash for Directory<'_, Buffer> {
+impl<Buffer, Access> Hash for Directory<'_, Buffer, Access> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_usize(self.archive as *const _ as usize);
         state.write_u64(self.chain.0);
         state.write_usize(self.entry_index);
     }
@@ -528,6 +529,7 @@ impl<Buffer> Hash for Directory<'_, Buffer> {
 
 impl<Buffer, Access> Hash for File<'_, Buffer, Access> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_usize(self.archive as *const _ as usize);
         state.write_u64(self.chain.0);
         state.write_usize(self.entry_index);
     }
@@ -537,6 +539,7 @@ impl<Buffer: Read + Write + Seek, Access: BufferAccess<Buffer>> Hash
     for FileMut<'_, Buffer, Access>
 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_usize(self.archive as *const _ as usize);
         state.write_u64(self.chain.0);
         state.write_usize(self.entry_index);
     }

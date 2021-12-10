@@ -5,7 +5,7 @@
 //! ```rust,no_run
 //! # let archive_path = "";
 //! # let key = b"";
-//! use pk2::Pk2;
+//! use pk2::unsync::Pk2;
 //! let archive = Pk2::open(archive_path, key)
 //!     .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
 //!
