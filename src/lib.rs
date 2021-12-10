@@ -46,24 +46,41 @@ pub trait BufferAccess<B> {
     fn with_mut_buffer<R>(&self, f: impl FnOnce(&mut B) -> R) -> R;
 }
 
+macro_rules! gen_type_aliases {
+    ($ident:ident) => {
+        pub type Pk2<Buffer = std::fs::File> = crate::archive::Pk2<Buffer, $ident<Buffer>>;
+
+        pub type File<'pk2, Buffer = std::fs::File> =
+            crate::archive::fs::File<'pk2, Buffer, $ident<Buffer>>;
+        pub type FileMut<'pk2, Buffer = std::fs::File> =
+            crate::archive::fs::FileMut<'pk2, Buffer, $ident<Buffer>>;
+        pub type DirEntry<'pk2, Buffer = std::fs::File> =
+            crate::archive::fs::DirEntry<'pk2, Buffer, $ident<Buffer>>;
+        pub type Directory<'pk2, Buffer = std::fs::File> =
+            crate::archive::fs::Directory<'pk2, Buffer, $ident<Buffer>>;
+        pub mod readonly {
+            pub type Pk2<Buffer = std::fs::File> = super::Pk2<crate::ReadOnly<Buffer>>;
+
+            pub type File<'pk2, Buffer = std::fs::File> =
+                super::File<'pk2, crate::ReadOnly<Buffer>>;
+            pub type FileMut<'pk2, Buffer = std::fs::File> =
+                super::FileMut<'pk2, crate::ReadOnly<Buffer>>;
+            pub type DirEntry<'pk2, Buffer = std::fs::File> =
+                super::DirEntry<'pk2, crate::ReadOnly<Buffer>>;
+            pub type Directory<'pk2, Buffer = std::fs::File> =
+                super::Directory<'pk2, crate::ReadOnly<Buffer>>;
+        }
+    };
+}
+
 pub mod sync {
     use std::sync::Mutex;
 
-    use crate::{BufferAccess, ReadOnly};
+    gen_type_aliases! {
+        Mutex
+    }
 
-    pub type Pk2<Buffer = std::fs::File> = crate::archive::Pk2<Buffer, Mutex<Buffer>>;
-    pub type ReadOnlyPk2<Buffer = std::fs::File> = Pk2<ReadOnly<Buffer>>;
-
-    pub type File<'pk2, Buffer = std::fs::File> =
-        crate::archive::fs::File<'pk2, Buffer, Mutex<Buffer>>;
-    pub type FileMut<'pk2, Buffer = std::fs::File> =
-        crate::archive::fs::FileMut<'pk2, Buffer, Mutex<Buffer>>;
-    pub type DirEntry<'pk2, Buffer = std::fs::File> =
-        crate::archive::fs::DirEntry<'pk2, Buffer, Mutex<Buffer>>;
-    pub type Directory<'pk2, Buffer = std::fs::File> =
-        crate::archive::fs::Directory<'pk2, Buffer, Mutex<Buffer>>;
-
-    impl<B> BufferAccess<B> for Mutex<B> {
+    impl<B> crate::BufferAccess<B> for Mutex<B> {
         fn new(b: B) -> Self {
             Mutex::new(b)
         }
@@ -79,21 +96,11 @@ pub mod sync {
 pub mod unsync {
     use std::cell::RefCell;
 
-    use crate::{BufferAccess, ReadOnly};
+    gen_type_aliases! {
+        RefCell
+    }
 
-    pub type Pk2<Buffer = std::fs::File> = crate::archive::Pk2<Buffer, RefCell<Buffer>>;
-    pub type ReadOnlyPk2<Buffer = std::fs::File> = Pk2<ReadOnly<Buffer>>;
-
-    pub type File<'pk2, Buffer = std::fs::File> =
-        crate::archive::fs::File<'pk2, Buffer, RefCell<Buffer>>;
-    pub type FileMut<'pk2, Buffer = std::fs::File> =
-        crate::archive::fs::FileMut<'pk2, Buffer, RefCell<Buffer>>;
-    pub type DirEntry<'pk2, Buffer = std::fs::File> =
-        crate::archive::fs::DirEntry<'pk2, Buffer, RefCell<Buffer>>;
-    pub type Directory<'pk2, Buffer = std::fs::File> =
-        crate::archive::fs::Directory<'pk2, Buffer, RefCell<Buffer>>;
-
-    impl<B> BufferAccess<B> for RefCell<B> {
+    impl<B> crate::BufferAccess<B> for RefCell<B> {
         fn new(b: B) -> Self {
             RefCell::new(b)
         }
