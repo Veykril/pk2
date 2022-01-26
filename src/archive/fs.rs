@@ -473,10 +473,10 @@ impl<'pk2, Buffer, Access> Directory<'pk2, Buffer, Access> {
     ) -> io::Result<()> {
         let mut path = std::path::PathBuf::new();
 
-        pub fn for_each_file_rec<'pk2, Buffer>(
+        pub fn for_each_file_rec<'pk2, Buffer, Access>(
             path: &mut PathBuf,
-            dir: &Directory<'pk2, Buffer>,
-            cb: &mut dyn FnMut(&Path, File<Buffer>) -> io::Result<()>,
+            dir: &Directory<'pk2, Buffer, Access>,
+            cb: &mut dyn FnMut(&Path, File<Buffer, Access>) -> io::Result<()>,
         ) -> io::Result<()> {
             for entry in dir.entries() {
                 match entry {
