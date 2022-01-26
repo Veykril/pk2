@@ -7,7 +7,7 @@ use crate::raw::ChainIndex;
 pub const PK2_VERSION: u32 = 0x0100_0002;
 pub const PK2_SIGNATURE: &[u8; 30] =
     b"JoyMax File Manager!\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00";
-pub const PK2_SALT: [u8; 10] = [0x03, 0xF8, 0xE4, 0x44, 0x88, 0x99, 0x3F, 0x64, 0xFE, 0x35];
+pub const PK2_SALT: &[u8; 10] = &[0x03, 0xF8, 0xE4, 0x44, 0x88, 0x99, 0x3F, 0x64, 0xFE, 0x35];
 pub const PK2_CHECKSUM_STORED: usize = 3;
 pub const PK2_CHECKSUM: &[u8; 16] = b"Joymax Pak File\0";
 
@@ -20,8 +20,8 @@ pub const PK2_ROOT_BLOCK: ChainIndex = ChainIndex(mem::size_of::<RawPackHeader>(
 // Sentinel entry to give the root block a proper path descriptor
 pub const PK2_ROOT_BLOCK_VIRTUAL: ChainIndex = ChainIndex(0);
 
-pub static PK2_CURRENT_DIR_IDENT: &str = ".";
-pub static PK2_PARENT_DIR_IDENT: &str = "..";
+pub const PK2_CURRENT_DIR_IDENT: &str = ".";
+pub const PK2_PARENT_DIR_IDENT: &str = "..";
 
 #[repr(packed)]
 pub struct RawPackHeader {

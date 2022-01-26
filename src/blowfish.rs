@@ -133,7 +133,7 @@ fn gen_final_blowfish_key_inplace(key: &mut [u8]) {
     let key_len = key.len().min(56);
 
     let mut base_key = [0; 56];
-    base_key[0..PK2_SALT.len()].copy_from_slice(&PK2_SALT);
+    base_key[0..PK2_SALT.len()].copy_from_slice(PK2_SALT);
 
     for i in 0..key_len {
         key[i] ^= base_key[i];

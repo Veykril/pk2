@@ -106,12 +106,12 @@ where
         Self::_create_impl(stream, key)
     }
 
-    fn _create_impl<K: AsRef<[u8]>>(stream: B, key: K) -> OpenResult<Self> {
-        let (header, mut stream, blowfish) = if key.as_ref().is_empty() {
-            (PackHeader::default(), stream, None)
+    fn _create_impl<K: AsRef<[u8]>>(mut stream: B, key: K) -> OpenResult<Self> {
+        let (header, blowfish) = if key.as_ref().is_empty() {
+            (PackHeader::default(), None)
         } else {
             let bf = Blowfish::new(key.as_ref())?;
-            (PackHeader::new_encrypted(&bf), stream, Some(bf))
+            (PackHeader::new_encrypted(&bf), Some(bf))
         };
 
         header.to_writer(&mut stream)?;

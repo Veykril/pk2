@@ -1,8 +1,7 @@
 //! File structs representing file entries inside a pk2 archive.
 use std::hash::Hash;
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
-use std::mem;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::archive::Pk2;
@@ -445,32 +444,29 @@ impl<'pk2, B> Directory<'pk2, B> {
         mut cb: impl FnMut(&Path, File<B>) -> io::Result<()>,
     ) -> io::Result<()> {
         let mut path = std::path::PathBuf::new();
-        let mut stack = vec![*self];
-        let mut first_iteration = true;
 
-        while let Some(dir) = stack.pop() {
-            if !mem::take(&mut first_iteration) {
-                path.push(dir.name());
-            };
-            let mut dir_done = true;
+        pub fn for_each_file_rec<'pk2, Buffer>(
+            path: &mut PathBuf,
+            dir: &Directory<'pk2, Buffer>,
+            cb: &mut dyn FnMut(&Path, File<Buffer>) -> io::Result<()>,
+        ) -> io::Result<()> {
             for entry in dir.entries() {
                 match entry {
                     DirEntry::Directory(dir) => {
-                        stack.push(dir);
-                        dir_done = false;
+                        path.push(dir.name());
+                        for_each_file_rec(path, &dir, cb)?;
                     }
                     DirEntry::File(file) => {
                         path.push(file.name());
-                        cb(&path, file)?;
-                        path.pop();
+                        cb(path, file)?;
                     }
                 }
-            }
-            if dir_done {
                 path.pop();
             }
+            Ok(())
         }
-        Ok(())
+
+        for_each_file_rec(&mut path, self, &mut cb)
     }
 
     /// Returns an iterator over all files in this directory.
