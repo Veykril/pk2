@@ -1,3 +1,5 @@
+#![feature(generic_associated_types)]
+
 //! A crate for reading and writing Silkroad Online's pk2 archive format.
 //!
 //! # Examples
@@ -40,24 +42,30 @@ impl<B: std::io::Seek> std::io::Seek for ReadOnly<B> {
     }
 }
 
-pub trait BufferAccess<B> {
-    fn new(b: B) -> Self;
-    fn into_inner(self) -> B;
-    fn with_mut_buffer<R>(&self, f: impl FnOnce(&mut B) -> R) -> R;
+pub trait Lock<T> {
+    fn new(b: T) -> Self;
+    fn into_inner(self) -> T;
+    fn with_mut_buffer<R>(&self, f: impl FnOnce(&mut T) -> R) -> R;
+}
+
+pub trait LockChoice {
+    type Lock<T>: Lock<T>;
+    fn new_locked<T>(b: T) -> Self::Lock<T> {
+        Self::Lock::new(b)
+    }
 }
 
 macro_rules! gen_type_aliases {
-    ($ident:ident) => {
-        pub type Pk2<Buffer = std::fs::File> = crate::archive::Pk2<Buffer, $ident<Buffer>>;
+    ($lock:ident) => {
+        pub type Pk2<Buffer = std::fs::File> = crate::archive::Pk2<Buffer, $lock>;
 
-        pub type File<'pk2, Buffer = std::fs::File> =
-            crate::archive::fs::File<'pk2, Buffer, $ident<Buffer>>;
+        pub type File<'pk2, Buffer = std::fs::File> = crate::archive::fs::File<'pk2, Buffer, $lock>;
         pub type FileMut<'pk2, Buffer = std::fs::File> =
-            crate::archive::fs::FileMut<'pk2, Buffer, $ident<Buffer>>;
+            crate::archive::fs::FileMut<'pk2, Buffer, $lock>;
         pub type DirEntry<'pk2, Buffer = std::fs::File> =
-            crate::archive::fs::DirEntry<'pk2, Buffer, $ident<Buffer>>;
+            crate::archive::fs::DirEntry<'pk2, Buffer, $lock>;
         pub type Directory<'pk2, Buffer = std::fs::File> =
-            crate::archive::fs::Directory<'pk2, Buffer, $ident<Buffer>>;
+            crate::archive::fs::Directory<'pk2, Buffer, $lock>;
         pub mod readonly {
             pub type Pk2<Buffer = std::fs::File> = super::Pk2<crate::ReadOnly<Buffer>>;
 
@@ -73,41 +81,53 @@ macro_rules! gen_type_aliases {
     };
 }
 
+pub use self::sync::Lock as SyncLock;
 pub mod sync {
     use std::sync::Mutex;
 
-    gen_type_aliases! {
-        Mutex
+    pub enum Lock {}
+    impl super::LockChoice for Lock {
+        type Lock<T> = Mutex<T>;
     }
 
-    impl<B> crate::BufferAccess<B> for Mutex<B> {
-        fn new(b: B) -> Self {
+    gen_type_aliases! {
+        Lock
+    }
+
+    impl<T> super::Lock<T> for Mutex<T> {
+        fn new(b: T) -> Self {
             Mutex::new(b)
         }
-        fn into_inner(self) -> B {
+        fn into_inner(self) -> T {
             self.into_inner().unwrap()
         }
-        fn with_mut_buffer<R>(&self, f: impl FnOnce(&mut B) -> R) -> R {
+        fn with_mut_buffer<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
             f(&mut self.lock().unwrap())
         }
     }
 }
 
+pub use self::unsync::Lock as UnsyncLock;
 pub mod unsync {
     use std::cell::RefCell;
 
-    gen_type_aliases! {
-        RefCell
+    pub enum Lock {}
+    impl super::LockChoice for Lock {
+        type Lock<T> = RefCell<T>;
     }
 
-    impl<B> crate::BufferAccess<B> for RefCell<B> {
-        fn new(b: B) -> Self {
+    gen_type_aliases! {
+        Lock
+    }
+
+    impl<T> super::Lock<T> for RefCell<T> {
+        fn new(b: T) -> Self {
             RefCell::new(b)
         }
-        fn into_inner(self) -> B {
+        fn into_inner(self) -> T {
             self.into_inner()
         }
-        fn with_mut_buffer<R>(&self, f: impl FnOnce(&mut B) -> R) -> R {
+        fn with_mut_buffer<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
             f(&mut self.borrow_mut())
         }
     }
