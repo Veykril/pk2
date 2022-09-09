@@ -1,19 +1,19 @@
 //! File structs representing file entries inside a pk2 archive.
-use std::cell::RefCell;
 use std::hash::Hash;
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::archive::{BufferAccess, Pk2};
+use crate::archive::{LockChoice, Pk2};
 use crate::error::{ChainLookupError, ChainLookupResult};
 use crate::raw::block_chain::PackBlockChain;
 use crate::raw::entry::{DirectoryEntry, FileEntry, PackEntry};
 use crate::raw::{ChainIndex, StreamOffset};
+use crate::Lock;
 
 /// Access read-only file handle.
-pub struct File<'pk2, Buffer, Access> {
-    archive: &'pk2 Pk2<Buffer, Access>,
+pub struct File<'pk2, Buffer, L: LockChoice> {
+    archive: &'pk2 Pk2<Buffer, L>,
     // the chain this file resides in
     chain: ChainIndex,
     // the index of this file in the chain
@@ -21,16 +21,16 @@ pub struct File<'pk2, Buffer, Access> {
     seek_pos: u64,
 }
 
-impl<'pk2, Buffer, Access> Copy for File<'pk2, Buffer, Access> {}
-impl<'pk2, Buffer, Access> Clone for File<'pk2, Buffer, Access> {
+impl<'pk2, Buffer, L: LockChoice> Copy for File<'pk2, Buffer, L> {}
+impl<'pk2, Buffer, L: LockChoice> Clone for File<'pk2, Buffer, L> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'pk2, Buffer, Access> File<'pk2, Buffer, Access> {
+impl<'pk2, Buffer, L: LockChoice> File<'pk2, Buffer, L> {
     pub(super) fn new(
-        archive: &'pk2 Pk2<Buffer, Access>,
+        archive: &'pk2 Pk2<Buffer, L>,
         chain: ChainIndex,
         entry_index: usize,
     ) -> Self {
@@ -69,7 +69,7 @@ impl<'pk2, Buffer, Access> File<'pk2, Buffer, Access> {
     }
 }
 
-impl<Buffer, Access> Seek for File<'_, Buffer, Access> {
+impl<Buffer, L: LockChoice> Seek for File<'_, Buffer, L> {
     fn seek(&mut self, seek: SeekFrom) -> io::Result<u64> {
         let size = self.entry().size() as u64;
         seek_impl(seek, self.seek_pos, size).map(|new_pos| {
@@ -79,10 +79,10 @@ impl<Buffer, Access> Seek for File<'_, Buffer, Access> {
     }
 }
 
-impl<Buffer, Access> Read for File<'_, Buffer, Access>
+impl<Buffer, L> Read for File<'_, Buffer, L>
 where
-    Access: BufferAccess<Buffer>,
     Buffer: Read + Seek,
+    L: LockChoice,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let pos_data = self.entry().pos_data();
@@ -122,12 +122,12 @@ where
 }
 
 /// Access write-able file handle.
-pub struct FileMut<'pk2, Buffer, Access>
+pub struct FileMut<'pk2, Buffer, L>
 where
-    Access: BufferAccess<Buffer>,
     Buffer: Write + Read + Seek,
+    L: LockChoice,
 {
-    archive: &'pk2 mut Pk2<Buffer, Access>,
+    archive: &'pk2 mut Pk2<Buffer, L>,
     // the chain this file resides in
     chain: ChainIndex,
     // the index of this file in the chain
@@ -135,13 +135,13 @@ where
     data: Cursor<Vec<u8>>,
 }
 
-impl<'pk2, Buffer, Access> FileMut<'pk2, Buffer, Access>
+impl<'pk2, Buffer, L> FileMut<'pk2, Buffer, L>
 where
-    Access: BufferAccess<Buffer>,
     Buffer: Read + Write + Seek,
+    L: LockChoice,
 {
     pub(super) fn new(
-        archive: &'pk2 mut Pk2<Buffer, Access>,
+        archive: &'pk2 mut Pk2<Buffer, L>,
         chain: ChainIndex,
         entry_index: usize,
     ) -> Self {
@@ -172,7 +172,7 @@ where
         self.entry_mut().create_time = time.into();
     }
 
-    pub fn copy_file_times<'a, Buffer2, Access2>(&mut self, other: &File<'a, Buffer2, Access2>) {
+    pub fn copy_file_times<'a, Buffer2, L2: LockChoice>(&mut self, other: &File<'a, Buffer2, L2>) {
         let this = self.entry_mut();
         let other = other.entry();
         this.modify_time = other.modify_time;
@@ -226,10 +226,10 @@ where
     }
 }
 
-impl<Buffer, Access> Seek for FileMut<'_, Buffer, Access>
+impl<Buffer, L> Seek for FileMut<'_, Buffer, L>
 where
-    Access: BufferAccess<Buffer>,
     Buffer: Read + Write + Seek,
+    L: LockChoice,
 {
     fn seek(&mut self, seek: SeekFrom) -> io::Result<u64> {
         let size = self.data.get_ref().len().max(self.entry().size() as usize) as u64;
@@ -240,10 +240,10 @@ where
     }
 }
 
-impl<Buffer, Access> Read for FileMut<'_, Buffer, Access>
+impl<Buffer, L> Read for FileMut<'_, Buffer, L>
 where
-    Access: BufferAccess<Buffer>,
     Buffer: Read + Write + Seek,
+    L: LockChoice,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.try_fetch_data()?;
@@ -263,10 +263,10 @@ where
     }
 }
 
-impl<Buffer, Access> Write for FileMut<'_, Buffer, Access>
+impl<Buffer, L> Write for FileMut<'_, Buffer, L>
 where
-    Access: BufferAccess<Buffer>,
     Buffer: Read + Write + Seek,
+    L: LockChoice,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.try_fetch_data()?;
@@ -311,10 +311,10 @@ where
     }
 }
 
-impl<Buffer, Access> Drop for FileMut<'_, Buffer, Access>
+impl<Buffer, L> Drop for FileMut<'_, Buffer, L>
 where
-    Access: BufferAccess<Buffer>,
     Buffer: Write + Read + Seek,
+    L: LockChoice,
 {
     fn drop(&mut self) {
         let _ = self.flush();
@@ -343,22 +343,22 @@ fn seek_impl(seek: SeekFrom, seek_pos: u64, size: u64) -> io::Result<u64> {
     }
 }
 
-pub enum DirEntry<'pk2, Buffer, Access> {
-    Directory(Directory<'pk2, Buffer, Access>),
-    File(File<'pk2, Buffer, Access>),
+pub enum DirEntry<'pk2, Buffer, L: LockChoice> {
+    Directory(Directory<'pk2, Buffer, L>),
+    File(File<'pk2, Buffer, L>),
 }
 
-impl<'pk2, Buffer, Access> Copy for DirEntry<'pk2, Buffer, Access> {}
-impl<'pk2, Buffer, Access> Clone for DirEntry<'pk2, Buffer, Access> {
+impl<'pk2, Buffer, L: LockChoice> Copy for DirEntry<'pk2, Buffer, L> {}
+impl<'pk2, Buffer, L: LockChoice> Clone for DirEntry<'pk2, Buffer, L> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'pk2, Buffer, Access> DirEntry<'pk2, Buffer, Access> {
+impl<'pk2, Buffer, L: LockChoice> DirEntry<'pk2, Buffer, L> {
     fn from(
         entry: &PackEntry,
-        archive: &'pk2 Pk2<Buffer, Access>,
+        archive: &'pk2 Pk2<Buffer, L>,
         chain: ChainIndex,
         idx: usize,
     ) -> Option<Self> {
@@ -376,22 +376,22 @@ impl<'pk2, Buffer, Access> DirEntry<'pk2, Buffer, Access> {
     }
 }
 
-pub struct Directory<'pk2, Buffer = std::fs::File, Access = RefCell<std::fs::File>> {
-    archive: &'pk2 Pk2<Buffer, Access>,
+pub struct Directory<'pk2, Buffer, L: LockChoice> {
+    archive: &'pk2 Pk2<Buffer, L>,
     chain: ChainIndex,
     entry_index: usize,
 }
 
-impl<'pk2, Buffer, Access> Copy for Directory<'pk2, Buffer, Access> {}
-impl<'pk2, Buffer, Access> Clone for Directory<'pk2, Buffer, Access> {
+impl<'pk2, Buffer, L: LockChoice> Copy for Directory<'pk2, Buffer, L> {}
+impl<'pk2, Buffer, L: LockChoice> Clone for Directory<'pk2, Buffer, L> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'pk2, Buffer, Access> Directory<'pk2, Buffer, Access> {
+impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
     pub(super) fn new(
-        archive: &'pk2 Pk2<Buffer, Access>,
+        archive: &'pk2 Pk2<Buffer, L>,
         chain: ChainIndex,
         entry_index: usize,
     ) -> Self {
@@ -426,21 +426,18 @@ impl<'pk2, Buffer, Access> Directory<'pk2, Buffer, Access> {
         self.entry().create_time()
     }
 
-    pub fn open_file(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> ChainLookupResult<File<'pk2, Buffer, Access>> {
+    pub fn open_file(&self, path: impl AsRef<Path>) -> ChainLookupResult<File<'pk2, Buffer, L>> {
         let (chain, entry_idx, entry) = self
             .archive
             .block_manager
             .resolve_path_to_entry_and_parent(self.chain, path.as_ref())?;
-        Pk2::<Buffer, Access>::is_file(entry).map(|_| File::new(self.archive, chain, entry_idx))
+        Pk2::<Buffer, L>::is_file(entry).map(|_| File::new(self.archive, chain, entry_idx))
     }
 
     pub fn open_directory(
         &self,
         path: impl AsRef<Path>,
-    ) -> ChainLookupResult<Directory<'pk2, Buffer, Access>> {
+    ) -> ChainLookupResult<Directory<'pk2, Buffer, L>> {
         let (chain, entry_idx, entry) = self
             .archive
             .block_manager
@@ -453,10 +450,7 @@ impl<'pk2, Buffer, Access> Directory<'pk2, Buffer, Access> {
         }
     }
 
-    pub fn open(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> ChainLookupResult<DirEntry<'pk2, Buffer, Access>> {
+    pub fn open(&self, path: impl AsRef<Path>) -> ChainLookupResult<DirEntry<'pk2, Buffer, L>> {
         let (chain, entry_idx, entry) = self
             .archive
             .block_manager
@@ -469,14 +463,14 @@ impl<'pk2, Buffer, Access> Directory<'pk2, Buffer, Access> {
     // Todo, replace this with a file_paths iterator once generators are stable
     pub fn for_each_file(
         &self,
-        mut cb: impl FnMut(&Path, File<Buffer, Access>) -> io::Result<()>,
+        mut cb: impl FnMut(&Path, File<Buffer, L>) -> io::Result<()>,
     ) -> io::Result<()> {
         let mut path = std::path::PathBuf::new();
 
-        pub fn for_each_file_rec<'pk2, Buffer, Access>(
+        pub fn for_each_file_rec<'pk2, Buffer, L: LockChoice>(
             path: &mut PathBuf,
-            dir: &Directory<'pk2, Buffer, Access>,
-            cb: &mut dyn FnMut(&Path, File<Buffer, Access>) -> io::Result<()>,
+            dir: &Directory<'pk2, Buffer, L>,
+            cb: &mut dyn FnMut(&Path, File<Buffer, L>) -> io::Result<()>,
         ) -> io::Result<()> {
             for entry in dir.entries() {
                 match entry {
@@ -498,7 +492,7 @@ impl<'pk2, Buffer, Access> Directory<'pk2, Buffer, Access> {
     }
 
     /// Returns an iterator over all files in this directory.
-    pub fn files(&self) -> impl Iterator<Item = File<'pk2, Buffer, Access>> {
+    pub fn files(&self) -> impl Iterator<Item = File<'pk2, Buffer, L>> {
         let chain = self.entry().children_position();
         let archive = self.archive;
         self.dir_chain(chain)
@@ -509,7 +503,7 @@ impl<'pk2, Buffer, Access> Directory<'pk2, Buffer, Access> {
 
     /// Returns an iterator over all items in this directory excluding `.` and
     /// `..`.
-    pub fn entries(&self) -> impl Iterator<Item = DirEntry<'pk2, Buffer, Access>> {
+    pub fn entries(&self) -> impl Iterator<Item = DirEntry<'pk2, Buffer, L>> {
         let chain = self.entry().children_position();
         let archive = self.archive;
         self.dir_chain(chain)
@@ -519,7 +513,7 @@ impl<'pk2, Buffer, Access> Directory<'pk2, Buffer, Access> {
     }
 }
 
-impl<Buffer, Access> Hash for Directory<'_, Buffer, Access> {
+impl<Buffer, L: LockChoice> Hash for Directory<'_, Buffer, L> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_usize(self.archive as *const _ as usize);
         state.write_u64(self.chain.0);
@@ -527,7 +521,7 @@ impl<Buffer, Access> Hash for Directory<'_, Buffer, Access> {
     }
 }
 
-impl<Buffer, Access> Hash for File<'_, Buffer, Access> {
+impl<Buffer, L: LockChoice> Hash for File<'_, Buffer, L> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_usize(self.archive as *const _ as usize);
         state.write_u64(self.chain.0);
@@ -535,8 +529,10 @@ impl<Buffer, Access> Hash for File<'_, Buffer, Access> {
     }
 }
 
-impl<Buffer: Read + Write + Seek, Access: BufferAccess<Buffer>> Hash
-    for FileMut<'_, Buffer, Access>
+impl<Buffer, L> Hash for FileMut<'_, Buffer, L>
+where
+    Buffer: Read + Write + Seek,
+    L: LockChoice,
 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_usize(self.archive as *const _ as usize);

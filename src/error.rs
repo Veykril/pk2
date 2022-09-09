@@ -34,6 +34,7 @@ impl From<ChainLookupError> for io::Error {
 }
 
 pub type OpenResult<T> = std::result::Result<T, OpenError>;
+
 #[derive(Debug)]
 pub enum OpenError {
     InvalidKey,

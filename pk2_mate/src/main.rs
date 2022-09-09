@@ -1,10 +1,9 @@
 use clap::{crate_authors, crate_description, crate_name, crate_version};
 use clap::{App, Arg, ArgMatches, SubCommand};
 use filetime::FileTime;
+use pk2::unsync::{DirEntry, Directory, Pk2};
 
 use std::path::{Path, PathBuf};
-
-use pk2::unsync::{DirEntry, Directory, Pk2};
 
 fn main() {
     let app = App::new(crate_name!())
@@ -71,7 +70,7 @@ fn extract(matches: &ArgMatches<'static>) {
         .map(PathBuf::from)
         .unwrap_or_else(|| archive_path.with_extension(""));
     let write_times = matches.is_present("time");
-    let archive = pk2::Pk2::open(archive_path, key)
+    let archive = Pk2::open(archive_path, key)
         .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
     let folder = archive.open_directory("/").unwrap();
     println!("Extracting {:?} to {:?}.", archive_path, out_path);

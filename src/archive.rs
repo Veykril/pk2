@@ -17,16 +17,16 @@ use crate::raw::block_manager::BlockManager;
 use crate::raw::entry::PackEntry;
 use crate::raw::header::PackHeader;
 use crate::raw::{ChainIndex, StreamOffset};
-use crate::{BufferAccess, ReadOnly};
+use crate::{Lock, LockChoice, ReadOnly};
 
-pub struct Pk2<Buffer, Access> {
-    stream: Access,
+pub struct Pk2<Buffer, L: LockChoice> {
+    stream: <L as LockChoice>::Lock<Buffer>,
     blowfish: Option<Blowfish>,
     block_manager: BlockManager,
     유령: PhantomData<Buffer>,
 }
 
-impl<A: BufferAccess<stdfs::File>> Pk2<stdfs::File, A> {
+impl<L: LockChoice> Pk2<stdfs::File, L> {
     /// Creates a new [`File`](stdfs::File) based archive at the given path.
     pub fn create_new<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> OpenResult<Self> {
         let file = stdfs::OpenOptions::new()
@@ -44,7 +44,7 @@ impl<A: BufferAccess<stdfs::File>> Pk2<stdfs::File, A> {
     }
 }
 
-impl<A: BufferAccess<ReadOnly<stdfs::File>>> Pk2<ReadOnly<stdfs::File>, A> {
+impl<L: LockChoice> Pk2<ReadOnly<stdfs::File>, L> {
     /// Opens an archive at the given path.
     pub fn open_readonly<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> OpenResult<Self> {
         let file = stdfs::OpenOptions::new().write(true).read(true).open(path)?;
@@ -61,7 +61,7 @@ impl<A: BufferAccess<ReadOnly<stdfs::File>>> Pk2<ReadOnly<stdfs::File>, A> {
     }
 }
 
-impl<A: BufferAccess<io::Cursor<Vec<u8>>>> Pk2<io::Cursor<Vec<u8>>, A> {
+impl<L: LockChoice> Pk2<io::Cursor<Vec<u8>>, L> {
     /// Creates a new archive in memory.
     pub fn create_new_in_memory<K: AsRef<[u8]>>(
         key: K,
@@ -74,15 +74,16 @@ impl<A: BufferAccess<io::Cursor<Vec<u8>>>> Pk2<io::Cursor<Vec<u8>>, A> {
     }
 }
 
-impl<A: BufferAccess<io::Cursor<Vec<u8>>>> From<Pk2<io::Cursor<Vec<u8>>, A>> for Vec<u8> {
-    fn from(pk2: Pk2<io::Cursor<Vec<u8>>, A>) -> Self {
+impl<L: LockChoice> From<Pk2<io::Cursor<Vec<u8>>, L>> for Vec<u8> {
+    fn from(pk2: Pk2<io::Cursor<Vec<u8>>, L>) -> Self {
         pk2.stream.into_inner().into_inner()
     }
 }
 
-impl<A: BufferAccess<B>, B> Pk2<B, A>
+impl<B, L> Pk2<B, L>
 where
     B: io::Read + io::Seek,
+    L: LockChoice,
 {
     pub fn open_in<K: AsRef<[u8]>>(mut stream: B, key: K) -> OpenResult<Self> {
         stream.seek(io::SeekFrom::Start(0))?;
@@ -103,13 +104,19 @@ where
         };
         let block_manager = BlockManager::new(blowfish.as_ref(), &mut stream)?;
 
-        Ok(Pk2 { stream: A::new(stream), blowfish, block_manager, 유령: PhantomData })
+        Ok(Pk2 {
+            stream: <L as LockChoice>::Lock::new(stream),
+            blowfish,
+            block_manager,
+            유령: PhantomData,
+        })
     }
 }
 
-impl<A: BufferAccess<B>, B> Pk2<B, A>
+impl<B, L> Pk2<B, L>
 where
     B: io::Read + io::Write + io::Seek,
+    L: LockChoice,
 {
     pub fn create_new_in<K: AsRef<[u8]>>(mut stream: B, key: K) -> OpenResult<Self> {
         stream.seek(io::SeekFrom::Start(0))?;
@@ -130,11 +137,11 @@ where
         crate::io::write_block(blowfish.as_ref(), &mut stream, PK2_ROOT_BLOCK.into(), &block)?;
 
         let block_manager = BlockManager::new(blowfish.as_ref(), &mut stream)?;
-        Ok(Pk2 { stream: A::new(stream), blowfish, block_manager, 유령: PhantomData })
+        Ok(Pk2 { stream: L::new_locked(stream), blowfish, block_manager, 유령: PhantomData })
     }
 }
 
-impl<A, B> Pk2<B, A> {
+impl<L: LockChoice, B> Pk2<B, L> {
     fn get_chain(&self, chain: ChainIndex) -> Option<&PackBlockChain> {
         self.block_manager.get(chain)
     }
@@ -174,14 +181,14 @@ impl<A, B> Pk2<B, A> {
     }
 }
 
-impl<A, B> Pk2<B, A> {
-    pub fn open_file<P: AsRef<Path>>(&self, path: P) -> ChainLookupResult<File<B, A>> {
+impl<B, L: LockChoice> Pk2<B, L> {
+    pub fn open_file<P: AsRef<Path>>(&self, path: P) -> ChainLookupResult<File<B, L>> {
         let (chain, entry_idx, entry) = self.root_resolve_path_to_entry_and_parent(path)?;
         Self::is_file(entry)?;
         Ok(File::new(self, chain, entry_idx))
     }
 
-    pub fn open_directory<P: AsRef<Path>>(&self, path: P) -> ChainLookupResult<Directory<B, A>> {
+    pub fn open_directory<P: AsRef<Path>>(&self, path: P) -> ChainLookupResult<Directory<B, L>> {
         let path = check_root(path.as_ref())?;
         let (chain, entry_idx) =
             match self.block_manager.resolve_path_to_entry_and_parent(PK2_ROOT_BLOCK, path) {
@@ -196,7 +203,7 @@ impl<A, B> Pk2<B, A> {
         Ok(Directory::new(self, chain, entry_idx))
     }
 
-    pub fn open_root_dir(&self) -> Directory<B, A> {
+    pub fn open_root_dir(&self) -> Directory<B, L> {
         Directory::new(self, PK2_ROOT_BLOCK_VIRTUAL, 0)
     }
 
@@ -206,16 +213,16 @@ impl<A, B> Pk2<B, A> {
     pub fn for_each_file(
         &self,
         base: impl AsRef<Path>,
-        cb: impl FnMut(&Path, File<B, A>) -> io::Result<()>,
+        cb: impl FnMut(&Path, File<B, L>) -> io::Result<()>,
     ) -> io::Result<()> {
         self.open_directory(base)?.for_each_file(cb)
     }
 }
 
-impl<A, B> Pk2<B, A>
+impl<B, L> Pk2<B, L>
 where
-    A: BufferAccess<B>,
     B: io::Read + io::Seek,
+    L: LockChoice,
 {
     pub fn read<P: AsRef<Path>>(&self, path: P) -> io::Result<Vec<u8>> {
         let mut file = self.open_file(path)?;
@@ -225,12 +232,12 @@ where
     }
 }
 
-impl<A, B> Pk2<B, A>
+impl<B, L> Pk2<B, L>
 where
-    A: BufferAccess<B>,
     B: io::Read + io::Write + io::Seek,
+    L: LockChoice,
 {
-    pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> ChainLookupResult<FileMut<B, A>> {
+    pub fn open_file_mut<P: AsRef<Path>>(&mut self, path: P) -> ChainLookupResult<FileMut<B, L>> {
         let (chain, entry_idx, entry) = self.root_resolve_path_to_entry_and_parent(path)?;
         Self::is_file(entry)?;
         Ok(FileMut::new(self, chain, entry_idx))
@@ -256,7 +263,7 @@ where
         Ok(())
     }
 
-    pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> io::Result<FileMut<B, A>> {
+    pub fn create_file<P: AsRef<Path>>(&mut self, path: P) -> io::Result<FileMut<B, L>> {
         let path = check_root(path.as_ref())?;
         let file_name = path
             .file_name()
