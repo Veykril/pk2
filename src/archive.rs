@@ -252,7 +252,7 @@ where
         Self::is_file(entry)?;
         entry.clear();
 
-        self.stream.with_mut_buffer(|stream| {
+        self.stream.with_lock(|stream| {
             crate::io::write_chain_entry(
                 self.blowfish.as_ref(),
                 stream,
@@ -269,7 +269,7 @@ where
             .file_name()
             .and_then(std::ffi::OsStr::to_str)
             .ok_or(ChainLookupError::InvalidPath)?;
-        let (chain, entry_idx) = self.stream.with_mut_buffer(|stream| {
+        let (chain, entry_idx) = self.stream.with_lock(|stream| {
             Self::create_entry_at(
                 &mut self.block_manager,
                 self.blowfish.as_ref(),

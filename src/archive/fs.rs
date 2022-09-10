@@ -88,7 +88,7 @@ where
         let pos_data = self.entry().pos_data();
         let rem_len = self.remaining_len();
         let len = buf.len().min(rem_len);
-        let n = self.archive.stream.with_mut_buffer(|stream| {
+        let n = self.archive.stream.with_lock(|stream| {
             crate::io::read_at(stream, pos_data + StreamOffset(self.seek_pos), &mut buf[..len])
         })?;
         self.seek(SeekFrom::Current(n as i64))?;
@@ -101,7 +101,7 @@ where
         if buf.len() < rem_len {
             Err(io::Error::new(io::ErrorKind::UnexpectedEof, "failed to fill whole buffer"))
         } else {
-            self.archive.stream.with_mut_buffer(|stream| {
+            self.archive.stream.with_lock(|stream| {
                 crate::io::read_at(
                     stream,
                     pos_data + StreamOffset(self.seek_pos),
@@ -212,9 +212,9 @@ where
         let pos_data = self.entry().pos_data();
         let size = self.entry().size();
         self.data.get_mut().resize(size as usize, 0);
-        self.archive.stream.with_mut_buffer(|buffer| {
-            crate::io::read_exact_at(buffer, pos_data, self.data.get_mut())
-        })
+        self.archive
+            .stream
+            .with_lock(|buffer| crate::io::read_exact_at(buffer, pos_data, self.data.get_mut()))
     }
 
     fn try_fetch_data(&mut self) -> io::Result<()> {
@@ -294,7 +294,7 @@ where
         let data = &self.data.get_ref()[..];
         debug_assert!(data.len() <= !0u32 as usize);
         let data_len = data.len() as u32;
-        self.archive.stream.with_mut_buffer(|stream| {
+        self.archive.stream.with_lock(|stream| {
             let fentry = entry.as_file_mut().expect("invalid file object, this is a bug");
             // new unwritten file/more data than what fits, so use a new block
             if data_len > fentry.size {
