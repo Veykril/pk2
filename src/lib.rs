@@ -45,7 +45,7 @@ impl<B: std::io::Seek> std::io::Seek for ReadOnly<B> {
 pub trait Lock<T> {
     fn new(b: T) -> Self;
     fn into_inner(self) -> T;
-    fn with_mut_buffer<R>(&self, f: impl FnOnce(&mut T) -> R) -> R;
+    fn with_lock<R>(&self, f: impl FnOnce(&mut T) -> R) -> R;
 }
 
 pub trait LockChoice {
@@ -101,7 +101,7 @@ pub mod sync {
         fn into_inner(self) -> T {
             self.into_inner().unwrap()
         }
-        fn with_mut_buffer<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        fn with_lock<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
             f(&mut self.lock().unwrap())
         }
     }
@@ -127,7 +127,7 @@ pub mod unsync {
         fn into_inner(self) -> T {
             self.into_inner()
         }
-        fn with_mut_buffer<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        fn with_lock<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
             f(&mut self.borrow_mut())
         }
     }
