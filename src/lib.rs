@@ -1,5 +1,3 @@
-#![feature(generic_associated_types)]
-
 //! A crate for reading and writing Silkroad Online's pk2 archive format.
 //!
 //! # Examples
