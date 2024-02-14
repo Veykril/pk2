@@ -96,7 +96,7 @@ where
         let blowfish = if header.encrypted {
             let bf = Blowfish::new(key.as_ref())?;
             let mut checksum = *PK2_CHECKSUM;
-            let _ = bf.encrypt(&mut checksum);
+            bf.encrypt(&mut checksum);
             header.verify(checksum)?;
             Some(bf)
         } else {

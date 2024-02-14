@@ -31,7 +31,7 @@ impl Default for PackHeader {
 impl PackHeader {
     pub fn new_encrypted(bf: &Blowfish) -> Self {
         let mut this = Self::default();
-        let _ = bf.encrypt(&mut this.verify);
+        bf.encrypt(&mut this.verify);
         this.encrypted = true;
         this
     }
@@ -86,7 +86,7 @@ impl RawIo for PackHeader {
 impl fmt::Debug for PackHeader {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let sig_end =
-            self.signature.iter().position(|&b| b == 0).unwrap_or_else(|| self.signature.len());
+            self.signature.iter().position(|&b| b == 0).unwrap_or(self.signature.len());
         f.debug_struct("PackHeader")
             .field("signature", &std::str::from_utf8(&self.signature[..sig_end]))
             .field("version", &self.version)

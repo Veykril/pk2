@@ -293,7 +293,7 @@ impl RawIo for PackEntry {
                 let name = {
                     let mut buf = [0; 81];
                     r.read_exact(&mut buf)?;
-                    let end = buf.iter().position(|b| *b == 0).unwrap_or_else(|| buf.len());
+                    let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
                     #[cfg(feature = "euc-kr")]
                     let name = encoding_rs::EUC_KR.decode_without_bom_handling(&buf[..end]).0;
                     #[cfg(not(feature = "euc-kr"))]

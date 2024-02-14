@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime};
 
-#[allow(non_snake_case)]
+#[allow(non_snake_case, clippy::upper_case_acronyms)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FILETIME {
     pub dwLowDateTime: u32,

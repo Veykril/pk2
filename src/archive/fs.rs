@@ -172,7 +172,7 @@ where
         self.entry_mut().create_time = time.into();
     }
 
-    pub fn copy_file_times<'a, Buffer2, L2: LockChoice>(&mut self, other: &File<'a, Buffer2, L2>) {
+    pub fn copy_file_times<Buffer2, L2: LockChoice>(&mut self, other: &File<'_, Buffer2, L2>) {
         let this = self.entry_mut();
         let other = other.entry();
         this.modify_time = other.modify_time;
@@ -258,7 +258,7 @@ where
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
         let len = buf.len();
         let size = self.data.get_ref().len().max(self.entry().size() as usize);
-        buf.resize(len + size as usize, 0);
+        buf.resize(len + size, 0);
         self.read_exact(&mut buf[len..]).map(|()| size)
     }
 }
