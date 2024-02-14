@@ -298,7 +298,8 @@ where
             let fentry = entry.as_file_mut().expect("invalid file object, this is a bug");
             // new unwritten file/more data than what fits, so use a new block
             if data_len > fentry.size {
-                // FIXME reuse previous buffer somehow?
+                // Append data at the end of the buffer as it no longer fits
+                // This causes fragmentation
                 fentry.pos_data = crate::io::append_data(&mut *stream, data)?;
             } else {
                 // data fits into the previous buffer space
