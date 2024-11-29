@@ -174,7 +174,7 @@ impl<L: LockChoice, B> Pk2<B, L> {
     }
 
     fn is_dir(entry: &PackEntry) -> ChainLookupResult<()> {
-        match entry.is_dir() {
+        match entry.is_directory() {
             true => Ok(()),
             false => Err(ChainLookupError::ExpectedDirectory),
         }

@@ -6,7 +6,7 @@ use crate::blowfish::Blowfish;
 use crate::constants::{PK2_FILE_BLOCK_ENTRY_COUNT, PK2_ROOT_BLOCK, PK2_ROOT_BLOCK_VIRTUAL};
 use crate::error::{ChainLookupError, ChainLookupResult, OpenResult};
 use crate::raw::block_chain::{PackBlock, PackBlockChain};
-use crate::raw::entry::{DirectoryEntry, PackEntry};
+use crate::raw::entry::{NonEmptyEntry, PackEntry};
 use crate::raw::{BlockOffset, ChainIndex};
 
 /// Simple BlockManager backed by a hashmap.
@@ -34,9 +34,9 @@ impl BlockManager {
             offsets.extend(
                 block_chain
                     .entries()
-                    .filter_map(PackEntry::as_directory)
+                    .filter_map(PackEntry::as_non_empty)
                     .filter(|d| d.is_normal_link())
-                    .map(DirectoryEntry::children_position),
+                    .filter_map(NonEmptyEntry::directory_children_position),
             );
             chains.insert(offset, block_chain);
         }

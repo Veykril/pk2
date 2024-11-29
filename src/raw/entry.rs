@@ -10,38 +10,23 @@ use crate::filetime::FILETIME;
 use crate::io::RawIo;
 use crate::raw::{BlockOffset, ChainIndex, StreamOffset};
 
+/// An entry of a [`PackBlock`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PackEntry {
+    pub(crate) entry: Option<NonEmptyEntry>,
+    next_block: Option<NonZeroU64>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DirectoryEntry {
+pub struct NonEmptyEntry {
+    pub(crate) kind: DirectoryOrFile,
     name: Box<str>,
     pub(crate) access_time: FILETIME,
     pub(crate) create_time: FILETIME,
     pub(crate) modify_time: FILETIME,
-    pos_children: ChainIndex,
 }
 
-impl DirectoryEntry {
-    fn new(name: Box<str>, pos_children: ChainIndex) -> Self {
-        let ftime = FILETIME::now();
-        DirectoryEntry {
-            name,
-            access_time: ftime,
-            create_time: ftime,
-            modify_time: ftime,
-            pos_children,
-        }
-    }
-
-    #[cfg(test)]
-    fn new_untimed(name: Box<str>, pos_children: ChainIndex) -> Self {
-        DirectoryEntry {
-            name,
-            access_time: FILETIME::default(),
-            create_time: FILETIME::default(),
-            modify_time: FILETIME::default(),
-            pos_children,
-        }
-    }
-
+impl NonEmptyEntry {
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -56,10 +41,6 @@ impl DirectoryEntry {
 
     pub fn modify_time(&self) -> Option<SystemTime> {
         self.modify_time.into_systime()
-    }
-
-    pub fn children_position(&self) -> ChainIndex {
-        self.pos_children
     }
 
     pub fn is_current_link(&self) -> bool {
@@ -73,79 +54,27 @@ impl DirectoryEntry {
     pub fn is_normal_link(&self) -> bool {
         !(self.is_current_link() || self.is_parent_link())
     }
+
+    pub fn is_directory(&self) -> bool {
+        matches!(self.kind, DirectoryOrFile::Directory { .. })
+    }
+
+    pub fn is_file(&self) -> bool {
+        matches!(self.kind, DirectoryOrFile::File { .. })
+    }
+
+    pub fn directory_children_position(&self) -> Option<ChainIndex> {
+        match self.kind {
+            DirectoryOrFile::Directory { pos_children } => Some(pos_children),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FileEntry {
-    name: Box<str>,
-    pub(crate) access_time: FILETIME,
-    pub(crate) create_time: FILETIME,
-    pub(crate) modify_time: FILETIME,
-    pub(crate) pos_data: StreamOffset,
-    pub(crate) size: u32,
-}
-
-impl FileEntry {
-    pub(crate) fn new(name: Box<str>, pos_data: StreamOffset, size: u32) -> Self {
-        let ftime = FILETIME::now();
-        FileEntry {
-            name,
-            access_time: ftime,
-            create_time: ftime,
-            modify_time: ftime,
-            pos_data,
-            size,
-        }
-    }
-
-    #[cfg(test)]
-    fn new_untimed(name: Box<str>, pos_data: StreamOffset, size: u32) -> Self {
-        FileEntry {
-            name,
-            access_time: FILETIME::default(),
-            create_time: FILETIME::default(),
-            modify_time: FILETIME::default(),
-            pos_data,
-            size,
-        }
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn access_time(&self) -> Option<SystemTime> {
-        self.access_time.into_systime()
-    }
-
-    pub fn create_time(&self) -> Option<SystemTime> {
-        self.create_time.into_systime()
-    }
-
-    pub fn modify_time(&self) -> Option<SystemTime> {
-        self.modify_time.into_systime()
-    }
-
-    pub fn pos_data(&self) -> StreamOffset {
-        self.pos_data
-    }
-
-    pub fn size(&self) -> u32 {
-        self.size
-    }
-}
-
-/// An entry of a [`PackBlock`].
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct PackEntry {
-    pub(crate) kind: Option<PackEntryKind>,
-    next_block: Option<NonZeroU64>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PackEntryKind {
-    Directory(DirectoryEntry),
-    File(FileEntry),
+pub enum DirectoryOrFile {
+    Directory { pos_children: ChainIndex },
+    File { pos_data: StreamOffset, size: u32 },
 }
 
 impl PackEntry {
@@ -154,8 +83,15 @@ impl PackEntry {
         pos_children: ChainIndex,
         next_block: Option<NonZeroU64>,
     ) -> Self {
+        let now = FILETIME::now();
         PackEntry {
-            kind: Some(PackEntryKind::Directory(DirectoryEntry::new(name.into(), pos_children))),
+            entry: Some(NonEmptyEntry {
+                kind: DirectoryOrFile::Directory { pos_children },
+                name: name.into(),
+                access_time: now,
+                create_time: now,
+                modify_time: now,
+            }),
             next_block,
         }
     }
@@ -166,35 +102,37 @@ impl PackEntry {
         size: u32,
         next_block: Option<NonZeroU64>,
     ) -> Self {
+        let now = FILETIME::now();
         PackEntry {
-            kind: Some(PackEntryKind::File(FileEntry::new(name.into(), pos_data, size))),
+            entry: Some(NonEmptyEntry {
+                kind: DirectoryOrFile::File { pos_data, size },
+                name: name.into(),
+                access_time: now,
+                create_time: now,
+                modify_time: now,
+            }),
             next_block,
         }
     }
 
     pub fn new_empty(next_block: Option<NonZeroU64>) -> Self {
-        PackEntry { kind: None, next_block }
+        PackEntry { entry: None, next_block }
     }
 
-    pub fn as_directory(&self) -> Option<&DirectoryEntry> {
-        match &self.kind {
-            Some(PackEntryKind::Directory(entry)) => Some(entry),
-            _ => None,
-        }
+    pub fn as_non_empty(&self) -> Option<&NonEmptyEntry> {
+        self.entry.as_ref()
     }
 
-    pub fn as_file(&self) -> Option<&FileEntry> {
-        match &self.kind {
-            Some(PackEntryKind::File(entry)) => Some(entry),
-            _ => None,
-        }
+    pub fn as_non_empty_mut(&mut self) -> Option<&mut NonEmptyEntry> {
+        self.entry.as_mut()
     }
 
-    pub fn as_file_mut(&mut self) -> Option<&mut FileEntry> {
-        match &mut self.kind {
-            Some(PackEntryKind::File(entry)) => Some(entry),
-            _ => None,
-        }
+    pub fn is_directory(&self) -> bool {
+        matches!(self.entry, Some(NonEmptyEntry { kind: DirectoryOrFile::Directory { .. }, .. }))
+    }
+
+    pub fn is_file(&self) -> bool {
+        matches!(self.entry, Some(NonEmptyEntry { kind: DirectoryOrFile::File { .. }, .. }))
     }
 
     pub fn clear(&mut self) -> PackEntry {
@@ -210,10 +148,7 @@ impl PackEntry {
     }
 
     pub fn name(&self) -> Option<&str> {
-        match self.kind.as_ref()? {
-            PackEntryKind::Directory(DirectoryEntry { name, .. })
-            | PackEntryKind::File(FileEntry { name, .. }) => Some(name),
-        }
+        Some(self.entry.as_ref()?.name())
     }
 
     pub fn name_eq_ignore_ascii_case(&self, other: &str) -> bool {
@@ -221,15 +156,7 @@ impl PackEntry {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.kind.is_none()
-    }
-
-    pub fn is_file(&self) -> bool {
-        matches!(self.kind, Some(PackEntryKind::File(_)))
-    }
-
-    pub fn is_dir(&self) -> bool {
-        matches!(self.kind, Some(PackEntryKind::Directory(_)))
+        self.entry.is_none()
     }
 }
 
@@ -278,23 +205,16 @@ impl RawIo for PackEntry {
                 r.read_u16::<LE>()?; //padding
 
                 Ok(PackEntry {
-                    kind: Some(if ty == 1 {
-                        PackEntryKind::Directory(DirectoryEntry {
-                            name,
-                            access_time,
-                            create_time,
-                            modify_time,
-                            pos_children: ChainIndex(position),
-                        })
-                    } else {
-                        PackEntryKind::File(FileEntry {
-                            name,
-                            access_time,
-                            create_time,
-                            modify_time,
-                            pos_data: StreamOffset(position),
-                            size,
-                        })
+                    entry: Some(NonEmptyEntry {
+                        name,
+                        access_time,
+                        create_time,
+                        modify_time,
+                        kind: if ty == 1 {
+                            DirectoryOrFile::Directory { pos_children: ChainIndex(position) }
+                        } else {
+                            DirectoryOrFile::File { pos_data: StreamOffset(position), size }
+                        },
                     }),
                     next_block,
                 })
@@ -307,7 +227,7 @@ impl RawIo for PackEntry {
     }
 
     fn to_writer<W: Write>(&self, mut w: W) -> IoResult<()> {
-        match &self.kind {
+        match &self.entry {
             None => {
                 w.write_all(
                     &[0; PK2_FILE_ENTRY_SIZE - mem::size_of::<u64>() - mem::size_of::<u16>()],
@@ -316,24 +236,16 @@ impl RawIo for PackEntry {
                 w.write_u16::<LE>(0)?;
                 Ok(())
             }
-            Some(
-                PackEntryKind::Directory(DirectoryEntry {
-                    name,
-                    access_time,
-                    create_time,
-                    modify_time,
-                    pos_children: ChainIndex(position),
-                })
-                | PackEntryKind::File(FileEntry {
-                    name,
-                    access_time,
-                    create_time,
-                    modify_time,
-                    pos_data: StreamOffset(position),
-                    ..
-                }),
-            ) => {
-                w.write_u8(if self.is_dir() { 1 } else { 2 })?;
+            Some(NonEmptyEntry {
+                kind:
+                    DirectoryOrFile::Directory { pos_children: ChainIndex(position) }
+                    | DirectoryOrFile::File { pos_data: StreamOffset(position), .. },
+                name,
+                access_time,
+                create_time,
+                modify_time,
+            }) => {
+                w.write_u8(if self.is_directory() { 1 } else { 2 })?;
                 #[cfg(feature = "euc-kr")]
                 let mut encoded = encoding_rs::EUC_KR.encode(name).0.into_owned();
                 #[cfg(not(feature = "euc-kr"))]
@@ -347,8 +259,8 @@ impl RawIo for PackEntry {
                 w.write_u32::<LE>(modify_time.dwLowDateTime)?;
                 w.write_u32::<LE>(modify_time.dwHighDateTime)?;
                 w.write_u64::<LE>(*position)?;
-                w.write_u32::<LE>(match self.kind {
-                    Some(PackEntryKind::File(FileEntry { size, .. })) => size,
+                w.write_u32::<LE>(match self.entry {
+                    Some(NonEmptyEntry { kind: DirectoryOrFile::File { size, .. }, .. }) => size,
                     _ => 0,
                 })?;
                 w.write_u64::<LE>(self.next_block.map_or(0, NonZeroU64::get))?;
@@ -366,7 +278,7 @@ mod test {
     use crate::constants::{RawPackFileEntry, PK2_FILE_ENTRY_SIZE};
     use crate::filetime::FILETIME;
     use crate::io::RawIo;
-    use crate::raw::entry::{DirectoryEntry, FileEntry, PackEntry, PackEntryKind};
+    use crate::raw::entry::{DirectoryOrFile, NonEmptyEntry, PackEntry};
     use crate::raw::{ChainIndex, StreamOffset};
 
     #[test]
@@ -401,10 +313,13 @@ mod test {
             )
             .unwrap(),
             PackEntry {
-                kind: Some(PackEntryKind::Directory(DirectoryEntry::new_untimed(
-                    "foobar".into(),
-                    ChainIndex(12345),
-                ))),
+                entry: Some(NonEmptyEntry {
+                    kind: DirectoryOrFile::Directory { pos_children: ChainIndex(12345) },
+                    name: "foobar".into(),
+                    access_time: FILETIME::default(),
+                    create_time: FILETIME::default(),
+                    modify_time: FILETIME::default(),
+                }),
                 next_block: NonZeroU64::new(63459)
             }
         );
@@ -430,11 +345,13 @@ mod test {
             )
             .unwrap(),
             PackEntry {
-                kind: Some(PackEntryKind::File(FileEntry::new_untimed(
-                    "foobar".into(),
-                    StreamOffset(12345),
-                    10000,
-                ))),
+                entry: Some(NonEmptyEntry {
+                    kind: DirectoryOrFile::File { pos_data: StreamOffset(12345), size: 10000 },
+                    name: "foobar".into(),
+                    access_time: FILETIME::default(),
+                    create_time: FILETIME::default(),
+                    modify_time: FILETIME::default(),
+                }),
                 next_block: NonZeroU64::new(63459)
             }
         );

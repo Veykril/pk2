@@ -4,7 +4,7 @@ use std::ops;
 use crate::constants::*;
 use crate::error::{ChainLookupError, ChainLookupResult};
 use crate::io::RawIo;
-use crate::raw::entry::{DirectoryEntry, PackEntry, PackEntryKind};
+use crate::raw::entry::{NonEmptyEntry, PackEntry};
 use crate::raw::{BlockOffset, ChainIndex, EntryOffset};
 
 /// A collection of [`PackBlock`]s where each block's next_block field points to
@@ -105,27 +105,19 @@ impl PackBlockChain {
         self.entries()
             .find(|entry| entry.name_eq_ignore_ascii_case(directory))
             .ok_or(ChainLookupError::NotFound)?
-            .as_directory()
-            .map(DirectoryEntry::children_position)
+            .as_non_empty()
+            .and_then(NonEmptyEntry::directory_children_position)
             .ok_or(ChainLookupError::ExpectedDirectory)
     }
 
     pub fn sort(&mut self, scratch: &mut Vec<PackEntry>) {
-        use std::cmp::Ordering;
         self.entries_mut()
             .for_each(|entry| scratch.push(std::mem::replace(entry, PackEntry::new_empty(None))));
-        scratch.sort_by(|a, b| match (&a.kind, &b.kind) {
-            (None, None) => Ordering::Equal,
-            (None, _) | (Some(PackEntryKind::File(_)), Some(PackEntryKind::Directory(_))) => {
-                Ordering::Greater
-            }
-            (_, None) | (Some(PackEntryKind::Directory(_)), Some(PackEntryKind::File(_))) => {
-                Ordering::Less
-            }
-            (Some(PackEntryKind::File(a)), Some(PackEntryKind::File(b))) => a.name().cmp(b.name()),
-            (Some(PackEntryKind::Directory(a)), Some(PackEntryKind::Directory(b))) => {
-                a.name().cmp(b.name())
-            }
+        scratch.sort_by(|a, b| {
+            a.entry
+                .as_ref()
+                .map(|it| (it.is_file(), it.name()))
+                .cmp(&b.entry.as_ref().map(|it| (it.is_file(), it.name())))
         });
         self.entries_mut()
             .zip(scratch.drain(..))

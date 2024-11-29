@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use crate::archive::{LockChoice, Pk2};
 use crate::error::{ChainLookupError, ChainLookupResult};
 use crate::raw::block_chain::PackBlockChain;
-use crate::raw::entry::{DirectoryEntry, FileEntry, PackEntry, PackEntryKind};
+use crate::raw::entry::{DirectoryOrFile, NonEmptyEntry, PackEntry};
 use crate::raw::{ChainIndex, StreamOffset};
 use crate::Lock;
 
@@ -50,28 +50,38 @@ impl<'pk2, Buffer, L: LockChoice> File<'pk2, Buffer, L> {
     }
 
     pub fn size(&self) -> u32 {
-        self.entry().size
+        match self.entry().kind {
+            DirectoryOrFile::File { size, .. } => size,
+            DirectoryOrFile::Directory { .. } => 0,
+        }
+    }
+
+    fn pos_data(&self) -> StreamOffset {
+        match self.entry().kind {
+            DirectoryOrFile::File { pos_data, .. } => pos_data,
+            DirectoryOrFile::Directory { .. } => unreachable!(),
+        }
     }
 
     pub fn name(&self) -> &'pk2 str {
         self.entry().name()
     }
 
-    fn entry(&self) -> &'pk2 FileEntry {
+    fn entry(&self) -> &'pk2 NonEmptyEntry {
         self.archive
             .get_entry(self.chain, self.entry_index)
-            .and_then(PackEntry::as_file)
+            .and_then(PackEntry::as_non_empty)
             .expect("invalid file object")
     }
 
     fn remaining_len(&self) -> usize {
-        (self.entry().size() as u64 - self.seek_pos) as usize
+        (self.size() as u64 - self.seek_pos) as usize
     }
 }
 
 impl<Buffer, L: LockChoice> Seek for File<'_, Buffer, L> {
     fn seek(&mut self, seek: SeekFrom) -> io::Result<u64> {
-        let size = self.entry().size() as u64;
+        let size = self.size() as u64;
         seek_impl(seek, self.seek_pos, size).inspect(|&new_pos| {
             self.seek_pos = new_pos;
         })
@@ -84,7 +94,7 @@ where
     L: LockChoice,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let pos_data = self.entry().pos_data();
+        let pos_data = self.pos_data();
         let rem_len = self.remaining_len();
         let len = buf.len().min(rem_len);
         let n = self.archive.stream.with_lock(|stream| {
@@ -95,7 +105,7 @@ where
     }
 
     fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        let pos_data = self.entry().pos_data();
+        let pos_data = self.pos_data();
         let rem_len = self.remaining_len();
         if buf.len() < rem_len {
             Err(io::Error::new(io::ErrorKind::UnexpectedEof, "failed to fill whole buffer"))
@@ -180,7 +190,10 @@ where
     }
 
     pub fn size(&self) -> u32 {
-        self.entry().size
+        match self.entry().kind {
+            DirectoryOrFile::File { size, .. } => size,
+            DirectoryOrFile::Directory { .. } => 0,
+        }
     }
 
     pub fn flush_drop(mut self) -> io::Result<()> {
@@ -193,23 +206,22 @@ where
         self.entry().name()
     }
 
-    fn entry(&self) -> &FileEntry {
+    fn entry(&self) -> &NonEmptyEntry {
         self.archive
             .get_entry(self.chain, self.entry_index)
-            .and_then(PackEntry::as_file)
+            .and_then(PackEntry::as_non_empty)
             .expect("invalid file object")
     }
 
-    fn entry_mut(&mut self) -> &mut FileEntry {
+    fn entry_mut(&mut self) -> &mut NonEmptyEntry {
         self.archive
             .get_entry_mut(self.chain, self.entry_index)
-            .and_then(PackEntry::as_file_mut)
+            .and_then(PackEntry::as_non_empty_mut)
             .expect("invalid file object")
     }
 
     fn fetch_data(&mut self) -> io::Result<()> {
-        let pos_data = self.entry().pos_data();
-        let size = self.entry().size();
+        let DirectoryOrFile::File { size, pos_data } = self.entry().kind else { unreachable!() };
         self.data.get_mut().resize(size as usize, 0);
         self.archive
             .stream
@@ -217,7 +229,7 @@ where
     }
 
     fn try_fetch_data(&mut self) -> io::Result<()> {
-        if self.data.get_ref().is_empty() && self.entry().size() > 0 {
+        if self.data.get_ref().is_empty() && self.size() > 0 {
             self.fetch_data()
         } else {
             Ok(())
@@ -231,7 +243,7 @@ where
     L: LockChoice,
 {
     fn seek(&mut self, seek: SeekFrom) -> io::Result<u64> {
-        let size = self.data.get_ref().len().max(self.entry().size() as usize) as u64;
+        let size = self.data.get_ref().len().max(self.size() as usize) as u64;
         seek_impl(seek, self.data.position(), size).inspect(|&new_pos| {
             self.data.set_position(new_pos);
         })
@@ -255,7 +267,7 @@ where
 
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
         let len = buf.len();
-        let size = self.data.get_ref().len().max(self.entry().size() as usize);
+        let size = self.data.get_ref().len().max(self.size() as usize);
         buf.resize(len + size, 0);
         self.read_exact(&mut buf[len..]).map(|()| size)
     }
@@ -293,17 +305,21 @@ where
         debug_assert!(data.len() <= !0u32 as usize);
         let data_len = data.len() as u32;
         self.archive.stream.with_lock(|stream| {
-            let fentry = entry.as_file_mut().expect("invalid file object, this is a bug");
+            let Some(NonEmptyEntry { kind: DirectoryOrFile::File { size, pos_data }, .. }) =
+                &mut entry.entry
+            else {
+                unreachable!()
+            };
             // new unwritten file/more data than what fits, so use a new block
-            if data_len > fentry.size {
+            if data_len > *size {
                 // Append data at the end of the buffer as it no longer fits
                 // This causes fragmentation
-                fentry.pos_data = crate::io::append_data(&mut *stream, data)?;
+                *pos_data = crate::io::append_data(&mut *stream, data)?;
             } else {
                 // data fits into the previous buffer space
-                crate::io::write_data_at(&mut *stream, fentry.pos_data, data)?;
+                crate::io::write_data_at(&mut *stream, *pos_data, data)?;
             }
-            fentry.size = data_len;
+            *size = data_len;
 
             crate::io::write_entry_at(self.archive.blowfish.as_ref(), stream, entry_offset, entry)
         })
@@ -361,15 +377,13 @@ impl<'pk2, Buffer, L: LockChoice> DirEntry<'pk2, Buffer, L> {
         chain: ChainIndex,
         idx: usize,
     ) -> Option<Self> {
-        match entry.kind.as_ref()? {
-            PackEntryKind::File(_) => Some(DirEntry::File(File::new(archive, chain, idx))),
-            PackEntryKind::Directory(dir) => {
-                if dir.is_normal_link() {
-                    Some(DirEntry::Directory(Directory::new(archive, chain, idx)))
-                } else {
-                    None
-                }
-            }
+        let entry = entry.entry.as_ref()?;
+        if entry.is_file() {
+            Some(DirEntry::File(File::new(archive, chain, idx)))
+        } else if entry.is_normal_link() {
+            Some(DirEntry::Directory(Directory::new(archive, chain, idx)))
+        } else {
+            None
         }
     }
 }
@@ -396,13 +410,19 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
         Directory { archive, chain, entry_index }
     }
 
-    fn entry(&self) -> &'pk2 DirectoryEntry {
+    fn entry(&self) -> &'pk2 NonEmptyEntry {
         self.archive
             .get_entry(self.chain, self.entry_index)
-            .and_then(PackEntry::as_directory)
+            .and_then(PackEntry::as_non_empty)
             .expect("invalid file object")
     }
 
+    fn pos_children(&self) -> ChainIndex {
+        match self.entry().kind {
+            DirectoryOrFile::Directory { pos_children } => pos_children,
+            DirectoryOrFile::File { .. } => unreachable!(),
+        }
+    }
     // returns the chain this folder represents
     fn dir_chain(&self, chain: ChainIndex) -> &'pk2 PackBlockChain {
         self.archive.get_chain(chain).expect("invalid dir object")
@@ -441,7 +461,7 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
             .block_manager
             .resolve_path_to_entry_and_parent(self.chain, path.as_ref())?;
 
-        if entry.as_directory().map(DirectoryEntry::is_normal_link).unwrap_or(false) {
+        if entry.as_non_empty().map_or(false, |it| it.is_directory() && it.is_normal_link()) {
             Ok(Directory::new(self.archive, chain, entry_idx))
         } else {
             Err(ChainLookupError::NotFound)
@@ -491,18 +511,18 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
 
     /// Returns an iterator over all files in this directory.
     pub fn files(&self) -> impl Iterator<Item = File<'pk2, Buffer, L>> {
-        let chain = self.entry().children_position();
+        let chain = self.pos_children();
         let archive = self.archive;
         self.dir_chain(chain)
             .entries()
             .enumerate()
-            .flat_map(move |(idx, entry)| entry.as_file().map(|_| File::new(archive, chain, idx)))
+            .flat_map(move |(idx, entry)| entry.is_file().then(|| File::new(archive, chain, idx)))
     }
 
     /// Returns an iterator over all items in this directory excluding `.` and
     /// `..`.
     pub fn entries(&self) -> impl Iterator<Item = DirEntry<'pk2, Buffer, L>> {
-        let chain = self.entry().children_position();
+        let chain = self.pos_children();
         let archive = self.archive;
         self.dir_chain(chain)
             .entries()
