@@ -23,6 +23,7 @@ pub const PK2_ROOT_BLOCK_VIRTUAL: ChainIndex = ChainIndex(0);
 pub const PK2_CURRENT_DIR_IDENT: &str = ".";
 pub const PK2_PARENT_DIR_IDENT: &str = "..";
 
+#[allow(dead_code)]
 #[repr(packed)]
 pub struct RawPackHeader {
     pub signature: [u8; 30],
@@ -32,6 +33,7 @@ pub struct RawPackHeader {
     pub reserved: [u8; 205],
 }
 
+#[allow(dead_code)]
 #[repr(packed)]
 #[derive(Copy, Clone)]
 pub struct RawPackFileEntry {

@@ -21,8 +21,8 @@ pub struct File<'pk2, Buffer, L: LockChoice> {
     seek_pos: u64,
 }
 
-impl<'pk2, Buffer, L: LockChoice> Copy for File<'pk2, Buffer, L> {}
-impl<'pk2, Buffer, L: LockChoice> Clone for File<'pk2, Buffer, L> {
+impl<Buffer, L: LockChoice> Copy for File<'_, Buffer, L> {}
+impl<Buffer, L: LockChoice> Clone for File<'_, Buffer, L> {
     fn clone(&self) -> Self {
         *self
     }
@@ -72,9 +72,8 @@ impl<'pk2, Buffer, L: LockChoice> File<'pk2, Buffer, L> {
 impl<Buffer, L: LockChoice> Seek for File<'_, Buffer, L> {
     fn seek(&mut self, seek: SeekFrom) -> io::Result<u64> {
         let size = self.entry().size() as u64;
-        seek_impl(seek, self.seek_pos, size).map(|new_pos| {
+        seek_impl(seek, self.seek_pos, size).inspect(|&new_pos| {
             self.seek_pos = new_pos;
-            new_pos
         })
     }
 }
@@ -233,9 +232,8 @@ where
 {
     fn seek(&mut self, seek: SeekFrom) -> io::Result<u64> {
         let size = self.data.get_ref().len().max(self.entry().size() as usize) as u64;
-        seek_impl(seek, self.data.position(), size).map(|new_pos| {
+        seek_impl(seek, self.data.position(), size).inspect(|&new_pos| {
             self.data.set_position(new_pos);
-            new_pos
         })
     }
 }
@@ -349,8 +347,8 @@ pub enum DirEntry<'pk2, Buffer, L: LockChoice> {
     File(File<'pk2, Buffer, L>),
 }
 
-impl<'pk2, Buffer, L: LockChoice> Copy for DirEntry<'pk2, Buffer, L> {}
-impl<'pk2, Buffer, L: LockChoice> Clone for DirEntry<'pk2, Buffer, L> {
+impl<Buffer, L: LockChoice> Copy for DirEntry<'_, Buffer, L> {}
+impl<Buffer, L: LockChoice> Clone for DirEntry<'_, Buffer, L> {
     fn clone(&self) -> Self {
         *self
     }
@@ -383,8 +381,8 @@ pub struct Directory<'pk2, Buffer, L: LockChoice> {
     entry_index: usize,
 }
 
-impl<'pk2, Buffer, L: LockChoice> Copy for Directory<'pk2, Buffer, L> {}
-impl<'pk2, Buffer, L: LockChoice> Clone for Directory<'pk2, Buffer, L> {
+impl<Buffer, L: LockChoice> Copy for Directory<'_, Buffer, L> {}
+impl<Buffer, L: LockChoice> Clone for Directory<'_, Buffer, L> {
     fn clone(&self) -> Self {
         *self
     }

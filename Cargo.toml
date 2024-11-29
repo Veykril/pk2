@@ -22,7 +22,7 @@ default = ["euc-kr"]
 euc-kr = ["encoding_rs"]
 
 [dev-dependencies]
-bytemuck = "1.2"
+bytemuck = "1.20.0"
 
 [workspace]
 members = ["pk2_mate"]
