@@ -4,7 +4,7 @@ use std::ops;
 use crate::constants::*;
 use crate::error::{ChainLookupError, ChainLookupResult};
 use crate::io::RawIo;
-use crate::raw::entry::{DirectoryEntry, PackEntry};
+use crate::raw::entry::{DirectoryEntry, PackEntry, PackEntryKind};
 use crate::raw::{BlockOffset, ChainIndex, EntryOffset};
 
 /// A collection of [`PackBlock`]s where each block's next_block field points to
@@ -114,16 +114,16 @@ impl PackBlockChain {
         use std::cmp::Ordering;
         self.entries_mut()
             .for_each(|entry| scratch.push(std::mem::replace(entry, PackEntry::new_empty(None))));
-        scratch.sort_by(|a, b| match (a, b) {
-            (PackEntry::Empty(_), PackEntry::Empty(_)) => Ordering::Equal,
-            (PackEntry::Empty(_), _) | (PackEntry::File(_), PackEntry::Directory(_)) => {
+        scratch.sort_by(|a, b| match (&a.kind, &b.kind) {
+            (PackEntryKind::Empty, PackEntryKind::Empty) => Ordering::Equal,
+            (PackEntryKind::Empty, _) | (PackEntryKind::File(_), PackEntryKind::Directory(_)) => {
                 Ordering::Greater
             }
-            (_, PackEntry::Empty(_)) | (PackEntry::Directory(_), PackEntry::File(_)) => {
+            (_, PackEntryKind::Empty) | (PackEntryKind::Directory(_), PackEntryKind::File(_)) => {
                 Ordering::Less
             }
-            (PackEntry::File(a), PackEntry::File(b)) => a.name().cmp(b.name()),
-            (PackEntry::Directory(a), PackEntry::Directory(b)) => a.name().cmp(b.name()),
+            (PackEntryKind::File(a), PackEntryKind::File(b)) => a.name().cmp(b.name()),
+            (PackEntryKind::Directory(a), PackEntryKind::Directory(b)) => a.name().cmp(b.name()),
         });
         self.entries_mut()
             .zip(scratch.drain(..))

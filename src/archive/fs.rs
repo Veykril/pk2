@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use crate::archive::{LockChoice, Pk2};
 use crate::error::{ChainLookupError, ChainLookupResult};
 use crate::raw::block_chain::PackBlockChain;
-use crate::raw::entry::{DirectoryEntry, FileEntry, PackEntry};
+use crate::raw::entry::{DirectoryEntry, FileEntry, PackEntry, PackEntryKind};
 use crate::raw::{ChainIndex, StreamOffset};
 use crate::Lock;
 
@@ -361,16 +361,16 @@ impl<'pk2, Buffer, L: LockChoice> DirEntry<'pk2, Buffer, L> {
         chain: ChainIndex,
         idx: usize,
     ) -> Option<Self> {
-        match entry {
-            PackEntry::File(_) => Some(DirEntry::File(File::new(archive, chain, idx))),
-            PackEntry::Directory(dir) => {
+        match &entry.kind {
+            PackEntryKind::File(_) => Some(DirEntry::File(File::new(archive, chain, idx))),
+            PackEntryKind::Directory(dir) => {
                 if dir.is_normal_link() {
                     Some(DirEntry::Directory(Directory::new(archive, chain, idx)))
                 } else {
                     None
                 }
             }
-            PackEntry::Empty(_) => None,
+            PackEntryKind::Empty => None,
         }
     }
 }
