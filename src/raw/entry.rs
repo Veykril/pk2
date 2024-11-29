@@ -136,23 +136,16 @@ impl FileEntry {
 }
 
 /// An entry of a [`PackBlock`].
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PackEntry {
-    pub(crate) kind: PackEntryKind,
+    pub(crate) kind: Option<PackEntryKind>,
     next_block: Option<NonZeroU64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PackEntryKind {
-    Empty,
     Directory(DirectoryEntry),
     File(FileEntry),
-}
-
-impl Default for PackEntry {
-    fn default() -> Self {
-        PackEntry { kind: PackEntryKind::Empty, next_block: None }
-    }
 }
 
 impl PackEntry {
@@ -162,7 +155,7 @@ impl PackEntry {
         next_block: Option<NonZeroU64>,
     ) -> Self {
         PackEntry {
-            kind: PackEntryKind::Directory(DirectoryEntry::new(name.into(), pos_children)),
+            kind: Some(PackEntryKind::Directory(DirectoryEntry::new(name.into(), pos_children))),
             next_block,
         }
     }
@@ -174,32 +167,32 @@ impl PackEntry {
         next_block: Option<NonZeroU64>,
     ) -> Self {
         PackEntry {
-            kind: PackEntryKind::File(FileEntry::new(name.into(), pos_data, size)),
+            kind: Some(PackEntryKind::File(FileEntry::new(name.into(), pos_data, size))),
             next_block,
         }
     }
 
     pub fn new_empty(next_block: Option<NonZeroU64>) -> Self {
-        PackEntry { kind: PackEntryKind::Empty, next_block }
+        PackEntry { kind: None, next_block }
     }
 
     pub fn as_directory(&self) -> Option<&DirectoryEntry> {
         match &self.kind {
-            PackEntryKind::Directory(entry) => Some(entry),
+            Some(PackEntryKind::Directory(entry)) => Some(entry),
             _ => None,
         }
     }
 
     pub fn as_file(&self) -> Option<&FileEntry> {
         match &self.kind {
-            PackEntryKind::File(entry) => Some(entry),
+            Some(PackEntryKind::File(entry)) => Some(entry),
             _ => None,
         }
     }
 
     pub fn as_file_mut(&mut self) -> Option<&mut FileEntry> {
         match &mut self.kind {
-            PackEntryKind::File(entry) => Some(entry),
+            Some(PackEntryKind::File(entry)) => Some(entry),
             _ => None,
         }
     }
@@ -217,8 +210,7 @@ impl PackEntry {
     }
 
     pub fn name(&self) -> Option<&str> {
-        match &self.kind {
-            PackEntryKind::Empty => None,
+        match self.kind.as_ref()? {
             PackEntryKind::Directory(DirectoryEntry { name, .. })
             | PackEntryKind::File(FileEntry { name, .. }) => Some(name),
         }
@@ -229,15 +221,15 @@ impl PackEntry {
     }
 
     pub fn is_empty(&self) -> bool {
-        matches!(self.kind, PackEntryKind::Empty)
+        self.kind.is_none()
     }
 
     pub fn is_file(&self) -> bool {
-        matches!(self.kind, PackEntryKind::File(_))
+        matches!(self.kind, Some(PackEntryKind::File(_)))
     }
 
     pub fn is_dir(&self) -> bool {
-        matches!(self.kind, PackEntryKind::Directory(_))
+        matches!(self.kind, Some(PackEntryKind::Directory(_)))
     }
 }
 
@@ -286,7 +278,7 @@ impl RawIo for PackEntry {
                 r.read_u16::<LE>()?; //padding
 
                 Ok(PackEntry {
-                    kind: if ty == 1 {
+                    kind: Some(if ty == 1 {
                         PackEntryKind::Directory(DirectoryEntry {
                             name,
                             access_time,
@@ -303,7 +295,7 @@ impl RawIo for PackEntry {
                             pos_data: StreamOffset(position),
                             size,
                         })
-                    },
+                    }),
                     next_block,
                 })
             }
@@ -316,7 +308,7 @@ impl RawIo for PackEntry {
 
     fn to_writer<W: Write>(&self, mut w: W) -> IoResult<()> {
         match &self.kind {
-            PackEntryKind::Empty => {
+            None => {
                 w.write_all(
                     &[0; PK2_FILE_ENTRY_SIZE - mem::size_of::<u64>() - mem::size_of::<u16>()],
                 )?;
@@ -324,21 +316,23 @@ impl RawIo for PackEntry {
                 w.write_u16::<LE>(0)?;
                 Ok(())
             }
-            PackEntryKind::Directory(DirectoryEntry {
-                name,
-                access_time,
-                create_time,
-                modify_time,
-                pos_children: ChainIndex(position),
-            })
-            | PackEntryKind::File(FileEntry {
-                name,
-                access_time,
-                create_time,
-                modify_time,
-                pos_data: StreamOffset(position),
-                ..
-            }) => {
+            Some(
+                PackEntryKind::Directory(DirectoryEntry {
+                    name,
+                    access_time,
+                    create_time,
+                    modify_time,
+                    pos_children: ChainIndex(position),
+                })
+                | PackEntryKind::File(FileEntry {
+                    name,
+                    access_time,
+                    create_time,
+                    modify_time,
+                    pos_data: StreamOffset(position),
+                    ..
+                }),
+            ) => {
                 w.write_u8(if self.is_dir() { 1 } else { 2 })?;
                 #[cfg(feature = "euc-kr")]
                 let mut encoded = encoding_rs::EUC_KR.encode(name).0.into_owned();
@@ -353,8 +347,8 @@ impl RawIo for PackEntry {
                 w.write_u32::<LE>(modify_time.dwLowDateTime)?;
                 w.write_u32::<LE>(modify_time.dwHighDateTime)?;
                 w.write_u64::<LE>(*position)?;
-                w.write_u32::<LE>(match &self.kind {
-                    &PackEntryKind::File(FileEntry { size, .. }) => size,
+                w.write_u32::<LE>(match self.kind {
+                    Some(PackEntryKind::File(FileEntry { size, .. })) => size,
                     _ => 0,
                 })?;
                 w.write_u64::<LE>(self.next_block.map_or(0, NonZeroU64::get))?;
@@ -407,10 +401,10 @@ mod test {
             )
             .unwrap(),
             PackEntry {
-                kind: PackEntryKind::Directory(DirectoryEntry::new_untimed(
+                kind: Some(PackEntryKind::Directory(DirectoryEntry::new_untimed(
                     "foobar".into(),
                     ChainIndex(12345),
-                )),
+                ))),
                 next_block: NonZeroU64::new(63459)
             }
         );
@@ -436,11 +430,11 @@ mod test {
             )
             .unwrap(),
             PackEntry {
-                kind: PackEntryKind::File(FileEntry::new_untimed(
+                kind: Some(PackEntryKind::File(FileEntry::new_untimed(
                     "foobar".into(),
                     StreamOffset(12345),
                     10000,
-                )),
+                ))),
                 next_block: NonZeroU64::new(63459)
             }
         );

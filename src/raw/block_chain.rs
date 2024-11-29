@@ -115,15 +115,17 @@ impl PackBlockChain {
         self.entries_mut()
             .for_each(|entry| scratch.push(std::mem::replace(entry, PackEntry::new_empty(None))));
         scratch.sort_by(|a, b| match (&a.kind, &b.kind) {
-            (PackEntryKind::Empty, PackEntryKind::Empty) => Ordering::Equal,
-            (PackEntryKind::Empty, _) | (PackEntryKind::File(_), PackEntryKind::Directory(_)) => {
+            (None, None) => Ordering::Equal,
+            (None, _) | (Some(PackEntryKind::File(_)), Some(PackEntryKind::Directory(_))) => {
                 Ordering::Greater
             }
-            (_, PackEntryKind::Empty) | (PackEntryKind::Directory(_), PackEntryKind::File(_)) => {
+            (_, None) | (Some(PackEntryKind::Directory(_)), Some(PackEntryKind::File(_))) => {
                 Ordering::Less
             }
-            (PackEntryKind::File(a), PackEntryKind::File(b)) => a.name().cmp(b.name()),
-            (PackEntryKind::Directory(a), PackEntryKind::Directory(b)) => a.name().cmp(b.name()),
+            (Some(PackEntryKind::File(a)), Some(PackEntryKind::File(b))) => a.name().cmp(b.name()),
+            (Some(PackEntryKind::Directory(a)), Some(PackEntryKind::Directory(b))) => {
+                a.name().cmp(b.name())
+            }
         });
         self.entries_mut()
             .zip(scratch.drain(..))

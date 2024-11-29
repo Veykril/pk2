@@ -361,7 +361,7 @@ impl<'pk2, Buffer, L: LockChoice> DirEntry<'pk2, Buffer, L> {
         chain: ChainIndex,
         idx: usize,
     ) -> Option<Self> {
-        match &entry.kind {
+        match entry.kind.as_ref()? {
             PackEntryKind::File(_) => Some(DirEntry::File(File::new(archive, chain, idx))),
             PackEntryKind::Directory(dir) => {
                 if dir.is_normal_link() {
@@ -370,7 +370,6 @@ impl<'pk2, Buffer, L: LockChoice> DirEntry<'pk2, Buffer, L> {
                     None
                 }
             }
-            PackEntryKind::Empty => None,
         }
     }
 }
