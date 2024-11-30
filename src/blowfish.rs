@@ -5,6 +5,7 @@ use byteorder::{ByteOrder, LE};
 
 use crate::constants::PK2_SALT;
 
+/// Error type for invalid blowfish keys.
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub struct InvalidKey;
 

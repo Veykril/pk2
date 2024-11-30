@@ -28,6 +28,7 @@ pub use self::api::Pk2;
 mod error;
 pub use self::error::{ChainLookupError, ChainLookupResult, InvalidKey, OpenError};
 
+/// An IO wrapper type that only exposes read and seek operations.
 pub struct ReadOnly<B>(pub B);
 impl<B: std::io::Read> std::io::Read for ReadOnly<B> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -40,16 +41,24 @@ impl<B: std::io::Seek> std::io::Seek for ReadOnly<B> {
     }
 }
 
+/// A type that allows mutable access to its inner value via interior mutability.
 pub trait Lock<T> {
+    /// Create a new instance of the lock.
     fn new(b: T) -> Self;
+    /// Consume the lock and return the inner value.
     fn into_inner(self) -> T;
+    /// Perform an operation on the inner value by taking the lock.
     fn with_lock<R>(&self, f: impl FnOnce(&mut T) -> R) -> R;
 }
 
+/// A type that allows choosing between different locking mechanisms for the backing buffer of the
+/// pk2 archive.
 pub trait LockChoice {
+    /// The type of lock to be used.
     type Lock<T>: Lock<T>;
-    fn new_locked<T>(b: T) -> Self::Lock<T> {
-        Self::Lock::new(b)
+    /// Wrap the value in our lock.
+    fn new_locked<T>(t: T) -> Self::Lock<T> {
+        Self::Lock::new(t)
     }
 }
 
@@ -64,6 +73,7 @@ macro_rules! gen_type_aliases {
             crate::api::fs::DirEntry<'pk2, Buffer, $lock>;
         pub type Directory<'pk2, Buffer = std::fs::File> =
             crate::api::fs::Directory<'pk2, Buffer, $lock>;
+        /// Read-only versions of the API types.
         pub mod readonly {
             pub type Pk2<Buffer = std::fs::File> = super::Pk2<crate::ReadOnly<Buffer>>;
 
@@ -83,6 +93,7 @@ pub use self::sync::Lock as SyncLock;
 pub mod sync {
     use std::sync::Mutex;
 
+    /// A lock that uses a [`std::sync::Mutex`] to provide interior mutability.
     pub enum Lock {}
     impl super::LockChoice for Lock {
         type Lock<T> = Mutex<T>;
@@ -109,6 +120,7 @@ pub use self::unsync::Lock as UnsyncLock;
 pub mod unsync {
     use std::cell::RefCell;
 
+    /// A lock that uses a [`std::cell::RefCell`] to provide interior mutability.
     pub enum Lock {}
     impl super::LockChoice for Lock {
         type Lock<T> = RefCell<T>;

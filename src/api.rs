@@ -19,6 +19,7 @@ use crate::error::{ChainLookupError, ChainLookupResult, OpenError, OpenResult};
 use crate::io::RawIo;
 use crate::{Lock, LockChoice, ReadOnly};
 
+/// A Pk2 archive.
 pub struct Pk2<Buffer, L: LockChoice> {
     stream: <L as LockChoice>::Lock<Buffer>,
     blowfish: Option<Box<Blowfish>>,
@@ -38,6 +39,9 @@ impl<L: LockChoice> Pk2<stdfs::File, L> {
     }
 
     /// Opens an archive at the given path.
+    ///
+    /// Note this eagerly parses the whole archive's file table into memory incurring a lot of read
+    /// operations on the file making this operation potentially slow.
     pub fn open<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> OpenResult<Self> {
         let file = stdfs::OpenOptions::new().write(true).read(true).open(path)?;
         Self::_open_in_impl(file, key)
@@ -46,13 +50,18 @@ impl<L: LockChoice> Pk2<stdfs::File, L> {
 
 impl<L: LockChoice> Pk2<ReadOnly<stdfs::File>, L> {
     /// Opens an archive at the given path.
+    ///
+    /// Note this eagerly parses the whole archive's file table into memory incurring a lot of read
+    /// operations on the file making this operation potentially slow.
     pub fn open_readonly<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> OpenResult<Self> {
         let file = stdfs::OpenOptions::new().write(true).read(true).open(path)?;
         Self::_open_in_impl(ReadOnly(file), key)
     }
 
-    /// Opens an archive at the given path with its file index sorted. This creates a read only
-    /// archive, trying to write to it will result in an error.
+    /// Opens an archive at the given path with its file index sorted.
+    ///
+    /// Note this eagerly parses the whole archive's file table into memory incurring a lot of read
+    /// operations on the file making this operation potentially slow.
     pub fn open_sorted<P: AsRef<Path>, K: AsRef<[u8]>>(path: P, key: K) -> OpenResult<Self> {
         let file = stdfs::OpenOptions::new().read(true).open(path)?;
         let mut this = Self::_open_in_impl(ReadOnly(file), key)?;
@@ -85,6 +94,10 @@ where
     B: io::Read + io::Seek,
     L: LockChoice,
 {
+    /// Opens an archive from the given stream.
+    ///
+    /// Note this eagerly parses the whole archive's file table into memory incurring a lot of read
+    /// operations on the stream.
     pub fn open_in<K: AsRef<[u8]>>(mut stream: B, key: K) -> OpenResult<Self> {
         stream.seek(io::SeekFrom::Start(0))?;
         Self::_open_in_impl(stream, key)

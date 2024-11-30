@@ -11,12 +11,12 @@ use crate::data::{ChainIndex, StreamOffset};
 use crate::error::{ChainLookupError, ChainLookupResult};
 use crate::Lock;
 
-/// Access read-only file handle.
+/// A readable file entry in a pk2 archive.
 pub struct File<'pk2, Buffer, L: LockChoice> {
     archive: &'pk2 Pk2<Buffer, L>,
-    // the chain this file resides in
+    /// The chain this file resides in
     chain: ChainIndex,
-    // the index of this file in the chain
+    /// The index of this file in the chain
     entry_index: usize,
     seek_pos: u64,
 }
@@ -130,7 +130,7 @@ where
     }
 }
 
-/// Access write-able file handle.
+/// A writable file entry in a pk2 archive.
 pub struct FileMut<'pk2, Buffer, L>
 where
     Buffer: Write + Read + Seek,
@@ -388,6 +388,7 @@ impl<'pk2, Buffer, L: LockChoice> DirEntry<'pk2, Buffer, L> {
     }
 }
 
+/// A directory entry in a pk2 archive.
 pub struct Directory<'pk2, Buffer, L: LockChoice> {
     archive: &'pk2 Pk2<Buffer, L>,
     chain: ChainIndex,
