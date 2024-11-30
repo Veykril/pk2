@@ -1,5 +1,3 @@
-#![allow(clippy::option_map_unit_fn)]
-
 //! General io for reading/writing from/to buffers.
 
 use std::io::{self, SeekFrom};
@@ -8,10 +6,10 @@ use crate::blowfish::Blowfish;
 use crate::constants::{
     PK2_CURRENT_DIR_IDENT, PK2_FILE_BLOCK_SIZE, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DIR_IDENT,
 };
+use crate::data::block_chain::{PackBlock, PackBlockChain};
+use crate::data::entry::PackEntry;
+use crate::data::{BlockOffset, ChainIndex, EntryOffset, StreamOffset};
 use crate::error::OpenResult;
-use crate::raw::block_chain::{PackBlock, PackBlockChain};
-use crate::raw::entry::PackEntry;
-use crate::raw::{BlockOffset, ChainIndex, EntryOffset, StreamOffset};
 
 /// Read a block at a given offset.
 pub fn read_block_at<F: io::Seek + io::Read>(
@@ -22,7 +20,9 @@ pub fn read_block_at<F: io::Seek + io::Read>(
     let mut buf = [0; PK2_FILE_BLOCK_SIZE];
     stream.seek(SeekFrom::Start(offset))?;
     stream.read_exact(&mut buf)?;
-    bf.map(|bf| bf.decrypt(&mut buf));
+    if let Some(bf) = bf {
+        bf.decrypt(&mut buf);
+    }
     PackBlock::from_reader(&buf[..]).map_err(Into::into)
 }
 
@@ -57,7 +57,9 @@ pub fn write_block<F: io::Seek + io::Write>(
 ) -> io::Result<()> {
     let mut buf = [0; PK2_FILE_BLOCK_SIZE];
     block.to_writer(&mut buf[..])?;
-    bf.map(|bf| bf.encrypt(&mut buf));
+    if let Some(bf) = bf {
+        bf.encrypt(&mut buf);
+    }
     stream.seek(SeekFrom::Start(offset))?;
     stream.write_all(&buf)?;
     Ok(())
@@ -72,7 +74,9 @@ pub fn write_entry_at<F: io::Seek + io::Write>(
 ) -> io::Result<()> {
     let mut buf = [0; PK2_FILE_ENTRY_SIZE];
     entry.to_writer(&mut buf[..])?;
-    bf.map(|bf| bf.encrypt(&mut buf));
+    if let Some(bf) = bf {
+        bf.encrypt(&mut buf);
+    }
     stream.seek(SeekFrom::Start(offset))?;
     stream.write_all(&buf)?;
     Ok(())

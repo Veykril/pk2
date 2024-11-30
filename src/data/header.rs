@@ -85,8 +85,7 @@ impl RawIo for PackHeader {
 
 impl fmt::Debug for PackHeader {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let sig_end =
-            self.signature.iter().position(|&b| b == 0).unwrap_or(self.signature.len());
+        let sig_end = self.signature.iter().position(|&b| b == 0).unwrap_or(self.signature.len());
         f.debug_struct("PackHeader")
             .field("signature", &std::str::from_utf8(&self.signature[..sig_end]))
             .field("version", &self.version)

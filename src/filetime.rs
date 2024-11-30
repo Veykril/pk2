@@ -1,5 +1,7 @@
+//! Windows `FILETIME`
 use std::time::{Duration, SystemTime};
 
+/// Windows `FILETIME`
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FILETIME {

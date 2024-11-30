@@ -10,18 +10,18 @@ use crate::constants::{
     PK2_CHECKSUM, PK2_CURRENT_DIR_IDENT, PK2_PARENT_DIR_IDENT, PK2_ROOT_BLOCK,
     PK2_ROOT_BLOCK_VIRTUAL,
 };
+use crate::data::block_chain::{PackBlock, PackBlockChain};
+use crate::data::block_manager::BlockManager;
+use crate::data::entry::PackEntry;
+use crate::data::header::PackHeader;
+use crate::data::{ChainIndex, StreamOffset};
 use crate::error::{ChainLookupError, ChainLookupResult, OpenError, OpenResult};
 use crate::io::RawIo;
-use crate::raw::block_chain::{PackBlock, PackBlockChain};
-use crate::raw::block_manager::BlockManager;
-use crate::raw::entry::PackEntry;
-use crate::raw::header::PackHeader;
-use crate::raw::{ChainIndex, StreamOffset};
 use crate::{Lock, LockChoice, ReadOnly};
 
 pub struct Pk2<Buffer, L: LockChoice> {
     stream: <L as LockChoice>::Lock<Buffer>,
-    blowfish: Option<Blowfish>,
+    blowfish: Option<Box<Blowfish>>,
     block_manager: BlockManager,
     유령: PhantomData<Buffer>,
 }
@@ -98,11 +98,11 @@ where
             let mut checksum = *PK2_CHECKSUM;
             bf.encrypt(&mut checksum);
             header.verify(checksum)?;
-            Some(bf)
+            Some(Box::new(bf))
         } else {
             None
         };
-        let block_manager = BlockManager::new(blowfish.as_ref(), &mut stream)?;
+        let block_manager = BlockManager::new(blowfish.as_deref(), &mut stream)?;
 
         Ok(Pk2 {
             stream: <L as LockChoice>::Lock::new(stream),
@@ -128,15 +128,15 @@ where
             (PackHeader::default(), None)
         } else {
             let bf = Blowfish::new(key.as_ref())?;
-            (PackHeader::new_encrypted(&bf), Some(bf))
+            (PackHeader::new_encrypted(&bf), Some(Box::new(bf)))
         };
 
         header.to_writer(&mut stream)?;
         let mut block = PackBlock::default();
         block[0] = PackEntry::new_directory(PK2_CURRENT_DIR_IDENT, PK2_ROOT_BLOCK, None);
-        crate::io::write_block(blowfish.as_ref(), &mut stream, PK2_ROOT_BLOCK.into(), &block)?;
+        crate::io::write_block(blowfish.as_deref(), &mut stream, PK2_ROOT_BLOCK.into(), &block)?;
 
-        let block_manager = BlockManager::new(blowfish.as_ref(), &mut stream)?;
+        let block_manager = BlockManager::new(blowfish.as_deref(), &mut stream)?;
         Ok(Pk2 { stream: L::new_locked(stream), blowfish, block_manager, 유령: PhantomData })
     }
 }
@@ -254,7 +254,7 @@ where
 
         self.stream.with_lock(|stream| {
             crate::io::write_chain_entry(
-                self.blowfish.as_ref(),
+                self.blowfish.as_deref(),
                 stream,
                 self.get_chain(chain_index).unwrap(),
                 entry_idx,
@@ -272,7 +272,7 @@ where
         let (chain, entry_idx) = self.stream.with_lock(|stream| {
             Self::create_entry_at(
                 &mut self.block_manager,
-                self.blowfish.as_ref(),
+                self.blowfish.as_deref(),
                 stream,
                 PK2_ROOT_BLOCK,
                 path,

@@ -5,10 +5,12 @@ use std::mem;
 use std::num::NonZeroU64;
 use std::time::SystemTime;
 
-use crate::constants::{PK2_CURRENT_DIR_IDENT, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DIR_IDENT};
+use crate::constants::{
+    RawPackFileEntry, PK2_CURRENT_DIR_IDENT, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DIR_IDENT,
+};
+use crate::data::{BlockOffset, ChainIndex, StreamOffset};
 use crate::filetime::FILETIME;
 use crate::io::RawIo;
-use crate::raw::{BlockOffset, ChainIndex, StreamOffset};
 
 /// An entry of a [`PackBlock`].
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -165,7 +167,7 @@ impl RawIo for PackEntry {
     /// PK2_FILE_ENTRY_SIZE bytes.
     fn from_reader<R: Read>(mut r: R) -> IoResult<Self> {
         match r.read_u8()? {
-            0 => {
+            RawPackFileEntry::TY_EMPTY => {
                 r.read_exact(
                     &mut [0; PK2_FILE_ENTRY_SIZE
                         - mem::size_of::<u64>()
@@ -176,7 +178,7 @@ impl RawIo for PackEntry {
                 r.read_u16::<LE>()?;
                 Ok(PackEntry::new_empty(next_block))
             }
-            ty @ (1 | 2) => {
+            ty @ (RawPackFileEntry::TY_DIRECTORY | RawPackFileEntry::TY_FILE) => {
                 let name = {
                     let mut buf = [0; 81];
                     r.read_exact(&mut buf)?;
@@ -210,7 +212,7 @@ impl RawIo for PackEntry {
                         access_time,
                         create_time,
                         modify_time,
-                        kind: if ty == 1 {
+                        kind: if ty == RawPackFileEntry::TY_DIRECTORY {
                             DirectoryOrFile::Directory { pos_children: ChainIndex(position) }
                         } else {
                             DirectoryOrFile::File { pos_data: StreamOffset(position), size }
@@ -245,7 +247,11 @@ impl RawIo for PackEntry {
                 create_time,
                 modify_time,
             }) => {
-                w.write_u8(if self.is_directory() { 1 } else { 2 })?;
+                w.write_u8(if self.is_directory() {
+                    RawPackFileEntry::TY_DIRECTORY
+                } else {
+                    RawPackFileEntry::TY_FILE
+                })?;
                 #[cfg(feature = "euc-kr")]
                 let mut encoded = encoding_rs::EUC_KR.encode(name).0.into_owned();
                 #[cfg(not(feature = "euc-kr"))]
@@ -276,10 +282,10 @@ mod test {
     use std::num::NonZeroU64;
 
     use crate::constants::{RawPackFileEntry, PK2_FILE_ENTRY_SIZE};
+    use crate::data::entry::{DirectoryOrFile, NonEmptyEntry, PackEntry};
+    use crate::data::{ChainIndex, StreamOffset};
     use crate::filetime::FILETIME;
     use crate::io::RawIo;
-    use crate::raw::entry::{DirectoryOrFile, NonEmptyEntry, PackEntry};
-    use crate::raw::{ChainIndex, StreamOffset};
 
     #[test]
     fn pack_entry_read_empty() {
@@ -296,7 +302,7 @@ mod test {
     #[test]
     fn pack_entry_read_directory() {
         let mut entry = RawPackFileEntry {
-            ty: 1,
+            ty: RawPackFileEntry::TY_DIRECTORY,
             name: [0; 81],
             access: FILETIME::default(),
             create: FILETIME::default(),
@@ -328,7 +334,7 @@ mod test {
     #[test]
     fn pack_entry_read_file() {
         let mut entry = RawPackFileEntry {
-            ty: 2,
+            ty: RawPackFileEntry::TY_FILE,
             name: [0; 81],
             access: FILETIME::default(),
             create: FILETIME::default(),

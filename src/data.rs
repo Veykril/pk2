@@ -1,3 +1,5 @@
+//! Functionality to deal with the raw data of a pk2 archive file.
+
 pub mod block_chain;
 pub mod block_manager;
 pub mod entry;

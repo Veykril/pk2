@@ -17,13 +17,13 @@
 //!             archives.
 mod blowfish;
 mod constants;
+mod data;
 mod filetime;
 mod io;
-mod raw;
 
-mod archive;
-pub use self::archive::fs::{DirEntry, Directory, File, FileMut};
-pub use self::archive::Pk2;
+mod api;
+pub use self::api::fs::{DirEntry, Directory, File, FileMut};
+pub use self::api::Pk2;
 
 mod error;
 pub use self::error::{ChainLookupError, ChainLookupResult, InvalidKey, OpenError};
@@ -55,15 +55,15 @@ pub trait LockChoice {
 
 macro_rules! gen_type_aliases {
     ($lock:ident) => {
-        pub type Pk2<Buffer = std::fs::File> = crate::archive::Pk2<Buffer, $lock>;
+        pub type Pk2<Buffer = std::fs::File> = crate::api::Pk2<Buffer, $lock>;
 
-        pub type File<'pk2, Buffer = std::fs::File> = crate::archive::fs::File<'pk2, Buffer, $lock>;
+        pub type File<'pk2, Buffer = std::fs::File> = crate::api::fs::File<'pk2, Buffer, $lock>;
         pub type FileMut<'pk2, Buffer = std::fs::File> =
-            crate::archive::fs::FileMut<'pk2, Buffer, $lock>;
+            crate::api::fs::FileMut<'pk2, Buffer, $lock>;
         pub type DirEntry<'pk2, Buffer = std::fs::File> =
-            crate::archive::fs::DirEntry<'pk2, Buffer, $lock>;
+            crate::api::fs::DirEntry<'pk2, Buffer, $lock>;
         pub type Directory<'pk2, Buffer = std::fs::File> =
-            crate::archive::fs::Directory<'pk2, Buffer, $lock>;
+            crate::api::fs::Directory<'pk2, Buffer, $lock>;
         pub mod readonly {
             pub type Pk2<Buffer = std::fs::File> = super::Pk2<crate::ReadOnly<Buffer>>;
 

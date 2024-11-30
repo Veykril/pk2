@@ -1,14 +1,16 @@
 //! Magic Numbers and definitions
 use std::mem;
 
+use crate::data::ChainIndex;
 use crate::filetime::FILETIME;
-use crate::raw::ChainIndex;
 
 pub const PK2_VERSION: u32 = 0x0100_0002;
-pub const PK2_SIGNATURE: &[u8; 30] =
-    b"JoyMax File Manager!\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+pub const PK2_SIGNATURE: &[u8; 30] = b"JoyMax File Manager!\n\0\0\0\0\0\0\0\0\0";
 pub const PK2_SALT: &[u8; 10] = &[0x03, 0xF8, 0xE4, 0x44, 0x88, 0x99, 0x3F, 0x64, 0xFE, 0x35];
+/// The number of bytes in the checksum that are actually stored in the header. Yes, the archive
+/// only stores 3 bytes of the checksum...
 pub const PK2_CHECKSUM_STORED: usize = 3;
+/// The checksum value.
 pub const PK2_CHECKSUM: &[u8; 16] = b"Joymax Pak File\0";
 
 pub const PK2_FILE_ENTRY_SIZE: usize = mem::size_of::<RawPackFileEntry>();
@@ -23,6 +25,7 @@ pub const PK2_ROOT_BLOCK_VIRTUAL: ChainIndex = ChainIndex(0);
 pub const PK2_CURRENT_DIR_IDENT: &str = ".";
 pub const PK2_PARENT_DIR_IDENT: &str = "..";
 
+/// The in-file header layout.
 #[allow(dead_code)]
 #[repr(packed)]
 pub struct RawPackHeader {
@@ -33,6 +36,7 @@ pub struct RawPackHeader {
     pub reserved: [u8; 205],
 }
 
+/// The structure of a single entry in a pack file.
 #[allow(dead_code)]
 #[repr(packed)]
 #[derive(Copy, Clone)]
@@ -46,6 +50,12 @@ pub struct RawPackFileEntry {
     pub size: u32,
     pub next_block: u64,
     pub _padding: [u8; 2],
+}
+
+impl RawPackFileEntry {
+    pub const TY_EMPTY: u8 = 0;
+    pub const TY_DIRECTORY: u8 = 1;
+    pub const TY_FILE: u8 = 2;
 }
 
 #[cfg(test)]

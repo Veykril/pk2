@@ -1,11 +1,11 @@
 use std::io::{Read, Result as IoResult, Write};
 use std::ops;
 
-use crate::constants::*;
+use crate::constants::{PK2_FILE_BLOCK_ENTRY_COUNT, PK2_FILE_ENTRY_SIZE};
+use crate::data::entry::{NonEmptyEntry, PackEntry};
+use crate::data::{BlockOffset, ChainIndex, EntryOffset};
 use crate::error::{ChainLookupError, ChainLookupResult};
 use crate::io::RawIo;
-use crate::raw::entry::{NonEmptyEntry, PackEntry};
-use crate::raw::{BlockOffset, ChainIndex, EntryOffset};
 
 /// A collection of [`PackBlock`]s where each block's next_block field points to
 /// the following block in the file. A PackBlockChain is never empty.
@@ -13,7 +13,6 @@ pub struct PackBlockChain {
     blocks: Vec<(BlockOffset, PackBlock)>,
 }
 
-#[allow(dead_code)]
 impl PackBlockChain {
     pub fn from_blocks(blocks: Vec<(BlockOffset, PackBlock)>) -> Self {
         debug_assert!(!blocks.is_empty());
@@ -23,12 +22,6 @@ impl PackBlockChain {
     pub fn push_and_link(&mut self, offset: BlockOffset, block: PackBlock) {
         self.last_entry_mut().set_next_block(offset);
         self.blocks.push((offset, block));
-    }
-
-    pub fn pop_and_unlink(&mut self) {
-        self.blocks.pop();
-        assert!(!self.blocks.is_empty());
-        self.last_entry_mut().set_next_block(BlockOffset(0));
     }
 
     /// This blockchains chain index/file offset.
@@ -48,16 +41,6 @@ impl PackBlockChain {
     /// Returns the number of PackEntries in this chain.
     pub fn num_entries(&self) -> usize {
         self.blocks.len() * PK2_FILE_BLOCK_ENTRY_COUNT
-    }
-
-    /// Returns the number of PackBlocks in this chain. This is always >= 1.
-    pub fn len(&self) -> usize {
-        self.blocks.len()
-    }
-
-    /// Returns the last entry of this PackBlockChain.
-    pub fn last_entry(&self) -> &PackEntry {
-        &self[self.num_entries() - 1]
     }
 
     /// Returns the last entry of this PackBlockChain.
@@ -88,10 +71,6 @@ impl PackBlockChain {
         self.blocks
             .get_mut(entry / PK2_FILE_BLOCK_ENTRY_COUNT)
             .and_then(|(_, block)| block.get_mut(entry % PK2_FILE_BLOCK_ENTRY_COUNT))
-    }
-
-    pub fn remove(&mut self, entry: usize) -> Option<PackEntry> {
-        self.get_mut(entry).map(PackEntry::clear)
     }
 
     pub fn contains_entry_index(&self, entry: usize) -> bool {

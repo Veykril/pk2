@@ -4,10 +4,10 @@ use std::path::{Component, Path};
 
 use crate::blowfish::Blowfish;
 use crate::constants::{PK2_FILE_BLOCK_ENTRY_COUNT, PK2_ROOT_BLOCK, PK2_ROOT_BLOCK_VIRTUAL};
+use crate::data::block_chain::{PackBlock, PackBlockChain};
+use crate::data::entry::{NonEmptyEntry, PackEntry};
+use crate::data::{BlockOffset, ChainIndex};
 use crate::error::{ChainLookupError, ChainLookupResult, OpenResult};
-use crate::raw::block_chain::{PackBlock, PackBlockChain};
-use crate::raw::entry::{NonEmptyEntry, PackEntry};
-use crate::raw::{BlockOffset, ChainIndex};
 
 /// Simple BlockManager backed by a hashmap.
 pub struct BlockManager {

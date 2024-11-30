@@ -304,3 +304,14 @@ pub const S: [[u32; 256]; 4] = [
         0xb74e6132, 0xce77e25b, 0x578fdfe3, 0x3ac372e6,
     ],
 ];
+
+#[test]
+fn roundtrip() {
+    let bf = Blowfish::new("testkey".as_bytes()).unwrap();
+    let data = "test data".as_bytes();
+    let mut enc = data.to_owned();
+    bf.encrypt(&mut enc);
+    assert_ne!(&enc, data);
+    bf.decrypt(&mut enc);
+    assert_eq!(&enc, data);
+}

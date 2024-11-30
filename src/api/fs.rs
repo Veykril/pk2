@@ -4,11 +4,11 @@ use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::archive::{LockChoice, Pk2};
+use crate::api::{LockChoice, Pk2};
+use crate::data::block_chain::PackBlockChain;
+use crate::data::entry::{DirectoryOrFile, NonEmptyEntry, PackEntry};
+use crate::data::{ChainIndex, StreamOffset};
 use crate::error::{ChainLookupError, ChainLookupResult};
-use crate::raw::block_chain::PackBlockChain;
-use crate::raw::entry::{DirectoryOrFile, NonEmptyEntry, PackEntry};
-use crate::raw::{ChainIndex, StreamOffset};
 use crate::Lock;
 
 /// Access read-only file handle.
@@ -321,7 +321,7 @@ where
             }
             *size = data_len;
 
-            crate::io::write_entry_at(self.archive.blowfish.as_ref(), stream, entry_offset, entry)
+            crate::io::write_entry_at(self.archive.blowfish.as_deref(), stream, entry_offset, entry)
         })
     }
 }
