@@ -6,22 +6,20 @@ jobs:
   test:
     name: Cargo Test
     runs-on: ubuntu-latest
-    continue-on-error: ${{ matrix.is-nightly }}
-    strategy:
-      matrix:
-        toolchain: [stable]
-        is-nightly: [false]
-        include:
-          - toolchain: nightly
-            is-nightly: true
     steps:
-    - uses: actions/checkout@v2
-    - uses: actions-rs/toolchain@v1
-      with:
-        profile: minimal
-        toolchain: ${{ matrix.toolchain }}
-        override: true
-    - uses: actions-rs/cargo@v1
-      with:
-        command: test
-        args: --no-default-features
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Rust toolchain
+        run: |
+          rustup update --no-self-update stable
+          rustup component add --toolchain stable rustfmt rust-src
+          rustup default stable
+
+      - name: Cache Dependencies
+        uses: Swatinem/rust-cache@640a22190e7a783d4c409684cea558f081f92012
+
+      - name: Test
+        run: cargo test --no-default-features -- --nocapture --quiet
