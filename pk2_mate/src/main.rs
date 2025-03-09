@@ -1,80 +1,101 @@
-use clap::{crate_authors, crate_description, crate_name, crate_version};
-use clap::{App, Arg, ArgMatches, SubCommand};
+use clap::{Parser, Subcommand};
 use filetime::FileTime;
 use pk2::unsync::{DirEntry, Directory, Pk2};
 
 use std::path::{Path, PathBuf};
 
+#[derive(Parser, Debug)]
+#[command(version, author, about)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Extracts a pk2 archive into a directory.
+    Extract {
+        /// Sets the archive to open.
+        #[arg(short, long)]
+        archive: PathBuf,
+        /// Sets the blowfish key.
+        #[arg(short, long, default_value = "169841")]
+        key: String,
+        /// Sets the output path to extract to.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// If passed, writes file times to the extracted files.
+        #[arg(short, long)]
+        write_time: bool,
+    },
+    /// Repackages a pk2 archive into a new archive, removing fragmentation.
+    Repack {
+        /// Sets the archive to open.
+        #[arg(short, long)]
+        archive: PathBuf,
+        /// Sets the blowfish key.
+        #[arg(short, long, default_value = "169841")]
+        key: String,
+        /// Sets the blowfish key for the output archive.
+        #[arg(long, default_value = "169841")]
+        output_key: String,
+        /// The path of the created archive.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+    /// Packs a directory into a pk2 archive.
+    Pack {
+        /// Sets the directory to pack.
+        #[arg(short, long)]
+        directory: PathBuf,
+        /// Sets the blowfish key for the resulting archive.
+        #[arg(short, long, alias = "output_key", default_value = "169841")]
+        key: String,
+        /// Sets the output path to pack into.
+        #[arg(short, long, alias = "out")]
+        archive: Option<PathBuf>,
+    },
+    /// Lists the contents of a pk2 archive.
+    List {
+        /// Sets the archive to open.
+        #[arg(short, long)]
+        archive: PathBuf,
+        /// Sets the blowfish key.
+        #[arg(short, long, default_value = "169841")]
+        key: String,
+        /// If passed, shows file times.
+        #[arg(short, long)]
+        write_time: bool,
+    },
+}
+
 fn main() {
-    let app = App::new(crate_name!())
-        .version(crate_version!())
-        .author(crate_authors!())
-        .about(crate_description!())
-        .subcommand(extract_app())
-        .subcommand(repack_app())
-        .subcommand(pack_app())
-        .subcommand(list_app());
-    let matches = app.get_matches();
-    match matches.subcommand() {
-        ("extract", Some(matches)) => extract(matches),
-        ("repack", Some(matches)) => repack(matches),
-        ("pack", Some(matches)) => pack(matches),
-        ("list", Some(matches)) => list(matches),
-        _ => println!("{}", matches.usage()),
+    let cli = Cli::parse();
+    let Some(command) = cli.command else {
+        return;
+    };
+    match command {
+        Commands::Extract { archive, key, out, write_time } => {
+            extract(archive, key, out, write_time);
+        }
+        Commands::Repack { archive, key, output_key, out } => {
+            repack(archive, key, output_key, out);
+        }
+        Commands::Pack { directory, key, archive } => {
+            pack(directory, key, archive);
+        }
+        Commands::List { archive, key, write_time } => {
+            list(archive, key, write_time);
+        }
     }
 }
 
-fn key_arg() -> Arg<'static, 'static> {
-    Arg::with_name("key")
-        .short("k")
-        .long("key")
-        .takes_value(true)
-        .env("PK2_BLOWFISH_KEY")
-        .default_value("169841")
-}
-
-fn extract_app() -> App<'static, 'static> {
-    SubCommand::with_name("extract")
-        .version(crate_version!())
-        .author(crate_authors!())
-        .about(crate_description!())
-        .arg(
-            Arg::with_name("archive")
-                .short("a")
-                .long("archive")
-                .required(true)
-                .takes_value(true)
-                .help("Sets the archive to open"),
-        )
-        .arg(key_arg().help("Sets the blowfish key"))
-        .arg(
-            Arg::with_name("out")
-                .short("o")
-                .long("out")
-                .takes_value(true)
-                .help("Sets the output path to extract to"),
-        )
-        .arg(
-            Arg::with_name("time")
-                .short("t")
-                .long("time")
-                .help("If passed, writes file times to the extracted files"),
-        )
-}
-
-fn extract(matches: &ArgMatches<'static>) {
-    let key = matches.value_of("key").unwrap().as_bytes();
-    let archive_path = matches.value_of_os("archive").map(Path::new).unwrap();
-    let out_path = matches
-        .value_of_os("out")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| archive_path.with_extension(""));
-    let write_times = matches.is_present("time");
-    let archive = Pk2::open(archive_path, key)
+fn extract(archive_path: PathBuf, key: String, out: PathBuf, write_time: bool) {
+    let archive = Pk2::open(&archive_path, key)
         .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
     let folder = archive.open_directory("/").unwrap();
-    println!("Extracting {:?} to {:?}.", archive_path, out_path);
-    extract_files(folder, &out_path, write_times);
+    println!("Extracting {:?} to {:?}.", archive_path, out);
+    extract_files(folder, &out, write_time);
 }
 
 fn extract_files(folder: Directory<'_>, out_path: &Path, write_times: bool) {
@@ -109,48 +130,11 @@ fn extract_files(folder: Directory<'_>, out_path: &Path, write_times: bool) {
     }
 }
 
-fn repack_app() -> App<'static, 'static> {
-    SubCommand::with_name("repack")
-        .version(crate_version!())
-        .author(crate_authors!())
-        .about(crate_description!())
-        .arg(
-            Arg::with_name("archive")
-                .short("a")
-                .long("archive")
-                .required(true)
-                .takes_value(true)
-                .help("Sets the archive to open"),
-        )
-        .arg(key_arg().help("Sets the blowfish key for the input archive"))
-        .arg(
-            Arg::with_name("packkey")
-                .short("p")
-                .long("packkey")
-                .takes_value(true)
-                .help("Sets the blowfish key for the output archive"),
-        )
-        .arg(
-            Arg::with_name("out")
-                .short("o")
-                .long("out")
-                .takes_value(true)
-                .help("Sets the output path to repack to"),
-        )
-}
-
-fn repack(matches: &ArgMatches<'static>) {
-    let key = matches.value_of("key").unwrap().as_bytes();
-    let packkey =
-        matches.value_of("packkey").or_else(|| matches.value_of("key")).unwrap().as_bytes();
-    let archive_path = matches.value_of_os("archive").map(Path::new).unwrap();
-    let out_archive_path = matches
-        .value_of_os("out")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| archive_path.with_extension("repack.pk2"));
-    let in_archive = Pk2::open(archive_path, key)
+fn repack(archive_path: PathBuf, key: String, output_key: String, out: Option<PathBuf>) {
+    let out_archive_path = out.unwrap_or_else(|| archive_path.with_extension("repack.pk2"));
+    let in_archive = Pk2::open(&archive_path, key)
         .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
-    let mut out_archive = pk2::Pk2::create_new(&out_archive_path, packkey)
+    let mut out_archive = pk2::Pk2::create_new(&out_archive_path, output_key)
         .unwrap_or_else(|_| panic!("failed to create archive at {:?}", out_archive_path));
     let folder = in_archive.open_directory("/").unwrap();
     println!("Repacking {:?} into {:?}.", archive_path, out_archive_path);
@@ -177,43 +161,15 @@ fn repack_files(out_archive: &mut Pk2, folder: Directory<'_>, path: &Path) {
     }
 }
 
-fn pack_app() -> App<'static, 'static> {
-    SubCommand::with_name("pack")
-        .version(crate_version!())
-        .author(crate_authors!())
-        .about(crate_description!())
-        .arg(
-            Arg::with_name("directory")
-                .short("d")
-                .long("directory")
-                .required(true)
-                .takes_value(true)
-                .help("Sets the directory to pack"),
-        )
-        .arg(key_arg().help("Sets the blowfish key for the resulting archive"))
-        .arg(
-            Arg::with_name("archive")
-                .short("a")
-                .long("archive")
-                .takes_value(true)
-                .help("Sets the output path to pack into"),
-        )
-}
-
-fn pack(matches: &ArgMatches<'static>) {
-    let key = matches.value_of("key").unwrap().as_bytes();
-    let input_path = matches.value_of_os("directory").map(Path::new).unwrap();
-    let out_archive_path = matches
-        .value_of_os("archive")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| input_path.with_extension("pk2"));
-    if !input_path.is_dir() {
+fn pack(directory: PathBuf, key: String, archive: Option<PathBuf>) {
+    let out_archive_path = archive.unwrap_or_else(|| directory.with_extension("pk2"));
+    if !directory.is_dir() {
         return;
     }
     let mut out_archive = pk2::Pk2::create_new(&out_archive_path, key)
         .unwrap_or_else(|_| panic!("failed to create archive at {:?}", out_archive_path));
-    println!("Packing {:?} into {:?}.", input_path, out_archive_path);
-    pack_files(&mut out_archive, input_path, input_path);
+    println!("Packing {:?} into {:?}.", directory, out_archive_path);
+    pack_files(&mut out_archive, &directory, &directory);
 }
 
 fn pack_files(out_archive: &mut Pk2, dir_path: &Path, base: &Path) {
@@ -238,28 +194,9 @@ fn pack_files(out_archive: &mut Pk2, dir_path: &Path, base: &Path) {
     }
 }
 
-fn list_app() -> App<'static, 'static> {
-    SubCommand::with_name("list")
-        .version(crate_version!())
-        .author(crate_authors!())
-        .about(crate_description!())
-        .arg(
-            Arg::with_name("archive")
-                .short("a")
-                .long("archive")
-                .required(true)
-                .takes_value(true)
-                .help("Sets the archive to open"),
-        )
-        .arg(key_arg().help("Sets the blowfish key"))
-        .arg(Arg::with_name("time").short("t").long("time").help("If passed, shows file times"))
-}
-
-fn list(matches: &ArgMatches<'static>) {
-    let key = matches.value_of("key").unwrap().as_bytes();
-    let archive_path = matches.value_of_os("archive").map(PathBuf::from).unwrap();
-    let archive = pk2::Pk2::open(&archive_path, key)
-        .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
+fn list(archive: PathBuf, key: String, _write_time: bool) {
+    let archive = pk2::Pk2::open(&archive, key)
+        .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive));
     let folder = archive.open_directory("/").unwrap();
     list_files(folder, "/".as_ref(), 1);
 }

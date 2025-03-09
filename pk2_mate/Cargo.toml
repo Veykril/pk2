@@ -7,5 +7,5 @@ publish = false
 
 [dependencies]
 pk2 = { path = "../" }
-clap = "2"
+clap = { version = "4", features = ["derive"]}
 filetime = "0.2"
