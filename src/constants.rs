@@ -27,7 +27,7 @@ pub const PK2_PARENT_DIR_IDENT: &str = "..";
 
 /// The in-file header layout.
 #[allow(dead_code)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct RawPackHeader {
     pub signature: [u8; 30],
     pub version: u32,
@@ -38,7 +38,7 @@ pub struct RawPackHeader {
 
 /// The structure of a single entry in a pack file.
 #[allow(dead_code)]
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub struct RawPackFileEntry {
     pub ty: u8, //0 = Empty, 1 = Directory, 2  = File

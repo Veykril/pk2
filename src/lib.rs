@@ -13,8 +13,8 @@
 //! # Features
 //!
 //! - `euc-kr`: enabled by default, adds `encoding_rs` as a dependency which changes string reading
-//!             and writing to use the `euc-kr` encoding which is required for the original game
-//!             archives.
+//!   and writing to use the `euc-kr` encoding which is required for the original game
+//!   archives.
 mod blowfish;
 mod constants;
 mod data;
@@ -22,8 +22,8 @@ mod filetime;
 mod io;
 
 mod api;
-pub use self::api::fs::{DirEntry, Directory, File, FileMut};
 pub use self::api::Pk2;
+pub use self::api::fs::{DirEntry, Directory, File, FileMut};
 
 mod error;
 pub use self::error::{ChainLookupError, ChainLookupResult, InvalidKey, OpenError};

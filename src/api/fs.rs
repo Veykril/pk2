@@ -4,12 +4,12 @@ use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::Lock;
 use crate::api::{LockChoice, Pk2};
 use crate::data::block_chain::PackBlockChain;
 use crate::data::entry::{DirectoryOrFile, NonEmptyEntry, PackEntry};
 use crate::data::{ChainIndex, StreamOffset};
 use crate::error::{ChainLookupError, ChainLookupResult};
-use crate::Lock;
 
 /// A readable file entry in a pk2 archive.
 pub struct File<'pk2, Buffer, L: LockChoice> {
@@ -229,11 +229,7 @@ where
     }
 
     fn try_fetch_data(&mut self) -> io::Result<()> {
-        if self.data.get_ref().is_empty() && self.size() > 0 {
-            self.fetch_data()
-        } else {
-            Ok(())
-        }
+        if self.data.get_ref().is_empty() && self.size() > 0 { self.fetch_data() } else { Ok(()) }
     }
 }
 
@@ -462,7 +458,7 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
             .block_manager
             .resolve_path_to_entry_and_parent(self.chain, path.as_ref())?;
 
-        if entry.as_non_empty().map_or(false, |it| it.is_directory() && it.is_normal_link()) {
+        if entry.as_non_empty().is_some_and(|it| it.is_directory() && it.is_normal_link()) {
             Ok(Directory::new(self.archive, chain, entry_idx))
         } else {
             Err(ChainLookupError::NotFound)
@@ -511,7 +507,7 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
     }
 
     /// Returns an iterator over all files in this directory.
-    pub fn files(&self) -> impl Iterator<Item = File<'pk2, Buffer, L>> {
+    pub fn files(&self) -> impl Iterator<Item = File<'pk2, Buffer, L>> + use<'pk2, Buffer, L> {
         let chain = self.pos_children();
         let archive = self.archive;
         self.dir_chain(chain)
@@ -522,7 +518,9 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
 
     /// Returns an iterator over all items in this directory excluding `.` and
     /// `..`.
-    pub fn entries(&self) -> impl Iterator<Item = DirEntry<'pk2, Buffer, L>> {
+    pub fn entries(
+        &self,
+    ) -> impl Iterator<Item = DirEntry<'pk2, Buffer, L>> + use<'pk2, Buffer, L> {
         let chain = self.pos_children();
         let archive = self.archive;
         self.dir_chain(chain)

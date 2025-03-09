@@ -182,7 +182,7 @@ impl BlockManager {
                 Ok(i) => chain = i,
                 // lies outside of the archive
                 Err(ChainLookupError::NotFound) if component == &Component::ParentDir => {
-                    return Err(ChainLookupError::InvalidPath)
+                    return Err(ChainLookupError::InvalidPath);
                 }
                 // found a non-existent part, we are done here
                 Err(ChainLookupError::NotFound) => break,
@@ -199,11 +199,7 @@ impl BlockManager {
             }
             let _ = components.next();
         }
-        if components.clone().count() == 0 {
-            Ok(None)
-        } else {
-            Ok(Some((chain, components)))
-        }
+        if components.clone().count() == 0 { Ok(None) } else { Ok(Some((chain, components))) }
     }
 
     pub fn sort(&mut self) {

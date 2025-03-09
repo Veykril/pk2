@@ -1,4 +1,4 @@
-use byteorder::{ReadBytesExt, WriteBytesExt, LE};
+use byteorder::{LE, ReadBytesExt, WriteBytesExt};
 
 use std::io::{Read, Result as IoResult, Write};
 use std::mem;
@@ -6,7 +6,7 @@ use std::num::NonZeroU64;
 use std::time::SystemTime;
 
 use crate::constants::{
-    RawPackFileEntry, PK2_CURRENT_DIR_IDENT, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DIR_IDENT,
+    PK2_CURRENT_DIR_IDENT, PK2_FILE_ENTRY_SIZE, PK2_PARENT_DIR_IDENT, RawPackFileEntry,
 };
 use crate::data::{BlockOffset, ChainIndex, StreamOffset};
 use crate::filetime::FILETIME;
@@ -281,7 +281,7 @@ impl RawIo for PackEntry {
 mod test {
     use std::num::NonZeroU64;
 
-    use crate::constants::{RawPackFileEntry, PK2_FILE_ENTRY_SIZE};
+    use crate::constants::{PK2_FILE_ENTRY_SIZE, RawPackFileEntry};
     use crate::data::entry::{DirectoryOrFile, NonEmptyEntry, PackEntry};
     use crate::data::{ChainIndex, StreamOffset};
     use crate::filetime::FILETIME;
