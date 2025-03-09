@@ -1,8 +1,11 @@
 use clap::{Parser, Subcommand};
-use filetime::FileTime;
 use pk2::unsync::{DirEntry, Directory, Pk2};
 
-use std::path::{Path, PathBuf};
+use std::{
+    fs::FileTimes,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 #[derive(Parser, Debug)]
 #[command(version, author, about)]
@@ -107,17 +110,25 @@ fn extract_files(folder: Directory<'_>, out_path: &Path, write_times: bool) {
             DirEntry::File(mut file) => {
                 file.read_to_end(&mut buf).unwrap();
                 let file_path = out_path.join(file.name());
-                if let Err(e) = std::fs::write(&file_path, &buf) {
-                    eprintln!("Failed writing file at {:?}: {}", file_path, e);
-                } else if write_times {
-                    if let Some(time) = file.modify_time() {
-                        let _ =
-                            filetime::set_file_mtime(&file_path, FileTime::from_system_time(time));
+                let os_file = std::fs::File::create(&file_path);
+                let res = os_file.and_then(|mut os_file| {
+                    os_file.write_all(&buf)?;
+                    if write_times {
+                        let mut times = FileTimes::new();
+                        if let Some(time) = file.modify_time() {
+                            times = times.set_modified(time);
+                        }
+                        if let Some(time) = file.access_time() {
+                            times = times.set_accessed(time);
+                        }
+                        if let Err(e) = os_file.set_times(times) {
+                            eprintln!("Failed writing file times at {file_path:?}: {e}");
+                        }
                     }
-                    if let Some(time) = file.access_time() {
-                        let _ =
-                            filetime::set_file_atime(&file_path, FileTime::from_system_time(time));
-                    }
+                    Ok(())
+                });
+                if let Err(e) = res {
+                    eprintln!("Failed writing file at {file_path:?}: {e}");
                 }
                 buf.clear();
             }
