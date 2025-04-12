@@ -1,11 +1,9 @@
-use clap::{Parser, Subcommand};
-use pk2::unsync::{DirEntry, Directory, Pk2};
+use std::fs::FileTimes;
+use std::io::Write;
 
-use std::{
-    fs::FileTimes,
-    io::Write,
-    path::{Path, PathBuf},
-};
+use camino::{Utf8Path, Utf8PathBuf};
+use clap::{Parser, Subcommand};
+use pk2_sync::sync::{DirEntry, Directory, Pk2};
 
 #[derive(Parser, Debug)]
 #[command(version, author, about)]
@@ -20,13 +18,13 @@ enum Commands {
     Extract {
         /// Sets the archive to open.
         #[arg(short, long)]
-        archive: PathBuf,
+        archive: Utf8PathBuf,
         /// Sets the blowfish key.
         #[arg(short, long, default_value = "169841")]
         key: String,
         /// Sets the output path to extract to.
         #[arg(short, long)]
-        out: PathBuf,
+        out: Utf8PathBuf,
         /// If passed, writes file times to the extracted files.
         #[arg(short, long)]
         write_time: bool,
@@ -35,7 +33,7 @@ enum Commands {
     Repack {
         /// Sets the archive to open.
         #[arg(short, long)]
-        archive: PathBuf,
+        archive: Utf8PathBuf,
         /// Sets the blowfish key.
         #[arg(short, long, default_value = "169841")]
         key: String,
@@ -44,25 +42,25 @@ enum Commands {
         output_key: String,
         /// The path of the created archive.
         #[arg(short, long)]
-        out: Option<PathBuf>,
+        out: Option<Utf8PathBuf>,
     },
     /// Packs a directory into a pk2 archive.
     Pack {
         /// Sets the directory to pack.
         #[arg(short, long)]
-        directory: PathBuf,
+        directory: Utf8PathBuf,
         /// Sets the blowfish key for the resulting archive.
         #[arg(short, long, alias = "output_key", default_value = "169841")]
         key: String,
         /// Sets the output path to pack into.
         #[arg(short, long, alias = "out")]
-        archive: Option<PathBuf>,
+        archive: Option<Utf8PathBuf>,
     },
     /// Lists the contents of a pk2 archive.
     List {
         /// Sets the archive to open.
         #[arg(short, long)]
-        archive: PathBuf,
+        archive: Utf8PathBuf,
         /// Sets the blowfish key.
         #[arg(short, long, default_value = "169841")]
         key: String,
@@ -93,7 +91,7 @@ fn main() {
     }
 }
 
-fn extract(archive_path: PathBuf, key: String, out: PathBuf, write_time: bool) {
+fn extract(archive_path: Utf8PathBuf, key: String, out: Utf8PathBuf, write_time: bool) {
     let archive = Pk2::open(&archive_path, key)
         .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
     let folder = archive.open_directory("/").unwrap();
@@ -101,7 +99,7 @@ fn extract(archive_path: PathBuf, key: String, out: PathBuf, write_time: bool) {
     extract_files(folder, &out, write_time);
 }
 
-fn extract_files(folder: Directory<'_>, out_path: &Path, write_times: bool) {
+fn extract_files(folder: Directory<'_>, out_path: &Utf8Path, write_times: bool) {
     use std::io::Read;
     let _ = std::fs::create_dir(out_path);
     let mut buf = Vec::new();
@@ -141,18 +139,18 @@ fn extract_files(folder: Directory<'_>, out_path: &Path, write_times: bool) {
     }
 }
 
-fn repack(archive_path: PathBuf, key: String, output_key: String, out: Option<PathBuf>) {
+fn repack(archive_path: Utf8PathBuf, key: String, output_key: String, out: Option<Utf8PathBuf>) {
     let out_archive_path = out.unwrap_or_else(|| archive_path.with_extension("repack.pk2"));
     let in_archive = Pk2::open(&archive_path, key)
         .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
-    let mut out_archive = pk2::Pk2::create_new(&out_archive_path, output_key)
+    let mut out_archive = Pk2::create_new(&out_archive_path, output_key)
         .unwrap_or_else(|_| panic!("failed to create archive at {:?}", out_archive_path));
     let folder = in_archive.open_directory("/").unwrap();
     println!("Repacking {:?} into {:?}.", archive_path, out_archive_path);
     repack_files(&mut out_archive, folder, "/".as_ref());
 }
 
-fn repack_files(out_archive: &mut Pk2, folder: Directory<'_>, path: &Path) {
+fn repack_files(out_archive: &mut Pk2, folder: Directory<'_>, path: &Utf8Path) {
     use std::io::{Read, Write};
     let mut buf = Vec::new();
     for entry in folder.entries() {
@@ -172,31 +170,31 @@ fn repack_files(out_archive: &mut Pk2, folder: Directory<'_>, path: &Path) {
     }
 }
 
-fn pack(directory: PathBuf, key: String, archive: Option<PathBuf>) {
+fn pack(directory: Utf8PathBuf, key: String, archive: Option<Utf8PathBuf>) {
     let out_archive_path = archive.unwrap_or_else(|| directory.with_extension("pk2"));
     if !directory.is_dir() {
         return;
     }
-    let mut out_archive = pk2::Pk2::create_new(&out_archive_path, key)
+    let mut out_archive = Pk2::create_new(&out_archive_path, key)
         .unwrap_or_else(|_| panic!("failed to create archive at {:?}", out_archive_path));
     println!("Packing {:?} into {:?}.", directory, out_archive_path);
     pack_files(&mut out_archive, &directory, &directory);
 }
 
-fn pack_files(out_archive: &mut Pk2, dir_path: &Path, base: &Path) {
+fn pack_files(out_archive: &mut Pk2, dir_path: &Utf8Path, base: &Utf8Path) {
     use std::io::{Read, Write};
     let mut buf = Vec::new();
     for entry in std::fs::read_dir(dir_path).unwrap() {
         let entry = entry.unwrap();
         let ty = entry.file_type().unwrap();
-        let path = entry.path();
+        let path = Utf8PathBuf::from_path_buf(entry.path()).unwrap();
         if ty.is_dir() {
             pack_files(out_archive, &path, base);
         } else if ty.is_file() {
             let mut file = std::fs::File::open(&path).unwrap();
             file.read_to_end(&mut buf).unwrap();
             out_archive
-                .create_file(Path::new("/").join(path.strip_prefix(base).unwrap()))
+                .create_file(&Utf8Path::new("/").join(path.strip_prefix(base).unwrap()))
                 .unwrap()
                 .write_all(&buf)
                 .unwrap();
@@ -205,15 +203,15 @@ fn pack_files(out_archive: &mut Pk2, dir_path: &Path, base: &Path) {
     }
 }
 
-fn list(archive: PathBuf, key: String, _write_time: bool) {
-    let archive = pk2::Pk2::open(&archive, key)
+fn list(archive: Utf8PathBuf, key: String, _write_time: bool) {
+    let archive = Pk2::open(&archive, key)
         .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive));
     let folder = archive.open_directory("/").unwrap();
     list_files(folder, "/".as_ref(), 1);
 }
 
-fn list_files(folder: Directory, path: &Path, ident_level: usize) {
-    println!("{}", path.display());
+fn list_files(folder: Directory, path: &Utf8Path, ident_level: usize) {
+    println!("{path}");
     for entry in folder.entries() {
         match entry {
             DirEntry::File(file) => {

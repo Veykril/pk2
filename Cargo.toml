@@ -12,11 +12,13 @@ categories = ["encoding", "filesystem", "parser-implementations"]
 exclude = ["pk2_mate/*"]
 
 [dependencies]
-byteorder = "1.5"
 encoding_rs = { version = "^0.8", optional = true }
+hashbrown = { version = "0.15.3", default-features = false }
+rustc-hash = "*"
 
 [features]
 default = ["euc-kr"]
+std = ["rustc-hash/std"]
 
 # required for parsing silkroad online archives
 euc-kr = ["encoding_rs"]
@@ -25,4 +27,4 @@ euc-kr = ["encoding_rs"]
 bytemuck = "1.22.0"
 
 [workspace]
-members = ["pk2_mate"]
+members = [ "crates/pk2-sync","pk2_mate"]

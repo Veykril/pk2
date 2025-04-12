@@ -1,14 +1,11 @@
-// based on https://github.com/RustCrypto/block-ciphers, copied out as their exposed API is rather unwieldy
-use std::fmt;
-
-use byteorder::{ByteOrder, LE};
-
-use crate::constants::PK2_SALT;
+//! Simple little endian blowfish implementation
+use alloc::fmt;
 
 /// Error type for invalid blowfish keys.
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub struct InvalidKey;
 
+#[cfg(feature = "std")]
 impl std::error::Error for InvalidKey {}
 impl fmt::Display for InvalidKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -59,20 +56,20 @@ impl Blowfish {
 
     #[inline(always)]
     fn encrypt_block(&self, block: &mut [u8; 8]) {
-        let l = LE::read_u32(&block[..4]);
-        let r = LE::read_u32(&block[4..]);
+        let l = u32::from_le_bytes(block[..4].try_into().unwrap());
+        let r = u32::from_le_bytes(block[4..].try_into().unwrap());
         let (l, r) = self.encrypt_p(l, r);
-        LE::write_u32(&mut block[..4], l);
-        LE::write_u32(&mut block[4..], r);
+        block[..4].copy_from_slice(&l.to_le_bytes());
+        block[4..].copy_from_slice(&r.to_le_bytes());
     }
 
     #[inline(always)]
     fn decrypt_block(&self, block: &mut [u8; 8]) {
-        let l = LE::read_u32(&block[..4]);
-        let r = LE::read_u32(&block[4..]);
+        let l = u32::from_le_bytes(block[..4].try_into().unwrap());
+        let r = u32::from_le_bytes(block[4..].try_into().unwrap());
         let (l, r) = self.decrypt_p(l, r);
-        LE::write_u32(&mut block[..4], l);
-        LE::write_u32(&mut block[4..], r);
+        block[..4].copy_from_slice(&l.to_le_bytes());
+        block[4..].copy_from_slice(&r.to_le_bytes());
     }
 
     fn expand_key(&mut self, key: &[u8]) {
@@ -98,10 +95,11 @@ impl Blowfish {
     #[allow(clippy::many_single_char_names)]
     fn round_function(&self, x: u32) -> u32 {
         let x = x as usize;
-        let a = self.s[0][x >> 24];
-        let b = self.s[1][(x >> 16) & 0xff];
-        let c = self.s[2][(x >> 8) & 0xff];
-        let d = self.s[3][x & 0xff];
+        let [a, b, c, d] = &self.s;
+        let a = a[x >> 24];
+        let b = b[(x >> 16) & 0xff];
+        let c = c[(x >> 8) & 0xff];
+        let d = d[x & 0xff];
         (a.wrapping_add(b) ^ c).wrapping_add(d)
     }
 
@@ -131,6 +129,8 @@ impl Blowfish {
 }
 
 fn gen_final_blowfish_key_inplace(key: &mut [u8]) {
+    const PK2_SALT: &[u8; 10] = &[0x03, 0xF8, 0xE4, 0x44, 0x88, 0x99, 0x3F, 0x64, 0xFE, 0x35];
+
     let key_len = key.len().min(56);
 
     let mut base_key = [0; 56];
@@ -310,7 +310,7 @@ pub const S: [[u32; 256]; 4] = [
 fn roundtrip() {
     let bf = Blowfish::new("testkey".as_bytes()).unwrap();
     let data = "test data".as_bytes();
-    let mut enc = data.to_owned();
+    let mut enc = data.to_vec();
     bf.encrypt(&mut enc);
     assert_ne!(&enc, data);
     bf.decrypt(&mut enc);
