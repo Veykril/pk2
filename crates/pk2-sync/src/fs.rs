@@ -481,14 +481,15 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
     // Todo, replace this with a file_paths iterator once generators are stable
     pub fn for_each_file(
         &self,
-        mut cb: impl FnMut(&Path, File<'_, Buffer, L>) -> io::Result<()>,
+        mut cb: impl FnMut(&Path, File<'pk2, Buffer, L>) -> io::Result<()>,
     ) -> io::Result<()> {
         let mut path = std::path::PathBuf::new();
 
+        #[allow(clippy::type_complexity)]
         pub fn for_each_file_rec<'pk2, Buffer, L: LockChoice>(
             path: &mut PathBuf,
             dir: &Directory<'pk2, Buffer, L>,
-            cb: &mut dyn FnMut(&Path, File<Buffer, L>) -> io::Result<()>,
+            cb: &mut dyn FnMut(&Path, File<'pk2, Buffer, L>) -> io::Result<()>,
         ) -> io::Result<()> {
             for entry in dir.entries() {
                 match entry {

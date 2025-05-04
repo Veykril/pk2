@@ -12,6 +12,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-nextest
+
       - name: Install Rust toolchain
         run: |
           rustup update --no-self-update stable
@@ -22,4 +26,4 @@ jobs:
         uses: Swatinem/rust-cache@640a22190e7a783d4c409684cea558f081f92012
 
       - name: Test
-        run: cargo test --no-default-features -- --nocapture --quiet
+        run: just ci

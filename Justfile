@@ -1,6 +1,7 @@
 ci:
     just test
     just nostd
+    just clippy
     cargo fmt --check --all
 
 nostd:

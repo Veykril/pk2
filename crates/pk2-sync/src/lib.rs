@@ -267,12 +267,7 @@ where
         )?;
 
         let chain_index = ChainIndex::read_sync(&mut stream, blowfish.as_deref())?;
-        Ok(Pk2 {
-            stream: L::new_locked(stream),
-            blowfish,
-            chain_index: chain_index,
-            유령: PhantomData,
-        })
+        Ok(Pk2 { stream: L::new_locked(stream), blowfish, chain_index, 유령: PhantomData })
     }
 }
 

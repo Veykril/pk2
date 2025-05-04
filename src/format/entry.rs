@@ -1,5 +1,4 @@
 use alloc::boxed::Box;
-use alloc::string::String;
 use core::num::NonZeroU64;
 use core::{fmt, mem};
 
@@ -49,6 +48,7 @@ impl NonEmptyEntry {
         &self.name
     }
 
+    #[allow(clippy::result_unit_err)]
     pub fn set_name(&mut self, name: &str) -> Result<(), ()> {
         if name.len() > 81 {
             return Err(());
@@ -79,6 +79,7 @@ impl NonEmptyEntry {
         }
     }
 
+    #[allow(clippy::result_unit_err)]
     pub fn set_file_data(&mut self, pos_data: StreamOffset, size: u32) -> Result<(), ()> {
         match &mut self.kind {
             DirectoryOrFile::File { pos_data: pos_data_tgt, size: size_tgt } => {
@@ -221,7 +222,7 @@ impl PackEntry {
                     #[cfg(feature = "euc-kr")]
                     let name = encoding_rs::EUC_KR.decode_without_bom_handling(s).0;
                     #[cfg(not(feature = "euc-kr"))]
-                    let name = String::from_utf8_lossy(s);
+                    let name = alloc::string::String::from_utf8_lossy(s);
                     name.into_owned().into_boxed_str()
                 };
                 let access_time = FILETIME {
