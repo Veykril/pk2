@@ -1,7 +1,6 @@
 //! File structs representing file entries inside a pk2 archive.
 use std::hash::Hash;
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
-use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -19,7 +18,7 @@ pub struct File<'pk2, Buffer, L: LockChoice> {
     chain: ChainOffset,
     /// The index of this file in the chain
     entry_index: usize,
-    seek_pos: Option<NonZeroU64>,
+    seek_pos: u64,
 }
 
 impl<Buffer, L: LockChoice> Copy for File<'_, Buffer, L> {}
@@ -35,7 +34,7 @@ impl<'pk2, Buffer, L: LockChoice> File<'pk2, Buffer, L> {
         chain: ChainOffset,
         entry_index: usize,
     ) -> Self {
-        File { archive, chain, entry_index, seek_pos: None }
+        File { archive, chain, entry_index, seek_pos: 0 }
     }
 
     pub fn modify_time(&self) -> Option<SystemTime> {
@@ -71,15 +70,15 @@ impl<'pk2, Buffer, L: LockChoice> File<'pk2, Buffer, L> {
     }
 
     fn remaining_len(&self) -> usize {
-        (self.size() as u64 - self.seek_pos.map_or(0, |it| it.get())) as usize
+        (self.size() as u64 - self.seek_pos) as usize
     }
 }
 
 impl<Buffer, L: LockChoice> Seek for File<'_, Buffer, L> {
     fn seek(&mut self, seek: SeekFrom) -> io::Result<u64> {
         let size = self.size() as u64;
-        seek_impl(seek, self.seek_pos.map_or(0, |it| it.get()), size).inspect(|&new_pos| {
-            self.seek_pos = NonZeroU64::new(new_pos);
+        seek_impl(seek, self.seek_pos, size).inspect(|&new_pos| {
+            self.seek_pos = new_pos;
         })
     }
 }
@@ -90,33 +89,29 @@ where
     L: LockChoice,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let Some(seek_pos) = self.seek_pos else { return Ok(0) };
         let pos_data = self.pos_data();
         let rem_len = self.remaining_len();
         let len = buf.len().min(rem_len);
+        // FIXME: check that self.seek_pos doesnt overflow into other files
         let n = self.archive.stream.with_lock(|stream| {
-            crate::io::read_at(stream, pos_data + StreamOffset(seek_pos), &mut buf[..len])
+            crate::io::read_at(stream, pos_data + self.seek_pos, &mut buf[..len])
         })?;
         self.seek(SeekFrom::Current(n as i64))?;
         Ok(n)
     }
 
     fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        let Some(seek_pos) = self.seek_pos else {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "failed to fill whole buffer",
-            ));
-        };
         let pos_data = self.pos_data();
         let rem_len = self.remaining_len();
         if buf.len() < rem_len {
             Err(io::Error::new(io::ErrorKind::UnexpectedEof, "failed to fill whole buffer"))
         } else {
+            // FIXME: check that self.seek_pos doesnt overflow into other files
+
             self.archive.stream.with_lock(|stream| {
-                crate::io::read_at(stream, pos_data + StreamOffset(seek_pos), &mut buf[..rem_len])
+                crate::io::read_at(stream, pos_data + self.seek_pos, &mut buf[..rem_len])
             })?;
-            self.seek_pos = seek_pos.checked_add(rem_len as u64);
+            self.seek_pos += rem_len as u64;
             Ok(())
         }
     }
@@ -141,6 +136,7 @@ where
     // the index of this file in the chain
     entry_index: usize,
     data: Cursor<Vec<u8>>,
+    update_modify_time: bool,
 }
 
 impl<'pk2, Buffer, L> FileMut<'pk2, Buffer, L>
@@ -153,7 +149,13 @@ where
         chain: ChainOffset,
         entry_index: usize,
     ) -> Self {
-        FileMut { archive, chain, entry_index, data: Cursor::new(Vec::new()) }
+        FileMut {
+            archive,
+            chain,
+            entry_index,
+            data: Cursor::new(Vec::new()),
+            update_modify_time: true,
+        }
     }
 
     pub fn modify_time(&self) -> Option<SystemTime> {
@@ -169,6 +171,7 @@ where
     }
 
     pub fn set_modify_time(&mut self, time: SystemTime) {
+        self.update_modify_time = false;
         self.entry_mut().modify_time = time.into();
     }
 
@@ -178,6 +181,10 @@ where
 
     pub fn set_create_time(&mut self, time: SystemTime) {
         self.entry_mut().create_time = time.into();
+    }
+
+    pub fn update_modify_time(&mut self, update_modify_time: bool) {
+        self.update_modify_time = update_modify_time;
     }
 
     pub fn copy_file_times<Buffer2, L2: LockChoice>(&mut self, other: &File<'_, Buffer2, L2>) {
@@ -190,12 +197,6 @@ where
 
     pub fn size(&self) -> u32 {
         self.entry().file_data().unwrap().1
-    }
-
-    pub fn flush_drop(mut self) -> io::Result<()> {
-        let res = self.flush();
-        std::mem::forget(self);
-        res
     }
 
     pub fn name(&self) -> &str {
@@ -289,7 +290,9 @@ where
         if self.data.get_ref().is_empty() {
             return Ok(()); // nothing to write
         }
-        self.set_modify_time(SystemTime::now());
+        if self.update_modify_time {
+            self.set_modify_time(SystemTime::now());
+        }
         let chain = self.archive.chain_index.get_mut(self.chain).expect("invalid chain");
         let entry_offset = chain.stream_offset_for_entry(self.entry_index).expect("invalid entry");
 
@@ -517,7 +520,8 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
         self.dir_chain(chain)
             .entries()
             .enumerate()
-            .flat_map(move |(idx, entry)| entry.is_file().then(|| File::new(archive, chain, idx)))
+            .filter(|(_, entry)| entry.is_file())
+            .map(move |(idx, _)| File::new(archive, chain, idx))
     }
 
     /// Returns an iterator over all items in this directory excluding `.` and
@@ -530,7 +534,7 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
         self.dir_chain(chain)
             .entries()
             .enumerate()
-            .flat_map(move |(idx, entry)| DirEntry::from(entry, archive, chain, idx))
+            .filter_map(move |(idx, entry)| DirEntry::from(entry, archive, chain, idx))
     }
 }
 

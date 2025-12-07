@@ -13,7 +13,7 @@ use crate::format::header::PackHeader;
 use crate::format::{BlockOffset, ChainOffset};
 
 /// Simple ChainIndex backed by a hashmap.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ChainIndex {
     chains: HashMap<ChainOffset, PackBlockChain, FxBuildHasher>,
 }
@@ -64,7 +64,7 @@ impl<'bm> ChainIndexParser<'bm> {
                 .entries()
                 .filter_map(PackEntry::children)
                 .filter(|chain| {
-                    *chain != chain_index || !self.chain_index.chains.contains_key(chain)
+                    *chain != chain_index && !self.chain_index.chains.contains_key(chain)
                 })
                 .map(|chain @ ChainOffset(co)| (chain, BlockOffset(co))),
         );
@@ -140,7 +140,7 @@ impl ChainIndex {
         current_chain: Option<ChainOffset>,
         path: &'path str,
     ) -> ChainLookupResult<(ChainOffset, &'path str)> {
-        let components = path.rsplit_once('/');
+        let components = path.rsplit_once(['/', '\\']);
 
         if let Some((rest, name)) = components {
             if name.is_empty() {
@@ -197,7 +197,7 @@ impl ChainIndex {
         current_chain: Option<ChainOffset>,
         path: &str,
     ) -> ChainLookupResult<ChainOffset> {
-        path.split('/').try_fold(
+        path.split(['/', '\\']).try_fold(
             // FIXME: is this correct?
             current_chain.unwrap_or(Self::PK2_ROOT_CHAIN_OFFSET),
             |idx, component| {
@@ -220,8 +220,10 @@ impl ChainIndex {
         &self,
         mut chain: ChainOffset,
         path: &'p str,
-    ) -> ChainLookupResult<Option<(ChainOffset, iter::Peekable<core::str::Split<'p, char>>)>> {
-        let mut components = path.split('/').peekable();
+    ) -> ChainLookupResult<
+        Option<(ChainOffset, iter::Peekable<impl use<'p> + Iterator<Item = &'p str>>)>,
+    > {
+        let mut components = path.split(['/', '\\']).peekable();
         while let Some(component) = components.peek() {
             if component.is_empty() {
                 return Err(ChainLookupError::InvalidPath);

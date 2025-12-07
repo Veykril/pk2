@@ -25,6 +25,9 @@ euc-kr = ["encoding_rs"]
 
 [dev-dependencies]
 bytemuck = "1.22.0"
+pk2-sync = { path = "./crates/pk2-sync" }
+camino = "1.1.9"
+expect-test = "1.5.1"
 
 [workspace]
 members = [ "crates/pk2-sync","pk2_mate"]

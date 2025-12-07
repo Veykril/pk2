@@ -21,9 +21,9 @@ pub struct BlockOffset(pub NonZeroU64);
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct StreamOffset(pub NonZeroU64);
 
-impl ops::Add for StreamOffset {
+impl ops::Add<u64> for StreamOffset {
     type Output = Self;
-    fn add(self, StreamOffset(rhs): Self) -> Self::Output {
-        StreamOffset(self.0.checked_add(rhs.get()).unwrap())
+    fn add(self, rhs: u64) -> Self::Output {
+        StreamOffset(self.0.checked_add(rhs).unwrap())
     }
 }

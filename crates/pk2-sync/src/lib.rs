@@ -202,6 +202,11 @@ where
     B: stdio::Read + stdio::Seek,
     L: LockChoice,
 {
+    /// Returns a reference to the chain index.
+    pub fn chain_index(&self) -> &ChainIndex {
+        &self.chain_index
+    }
+
     /// Opens an archive from the given stream.
     ///
     /// Note this eagerly parses the whole archive's file table into memory incurring a lot of read
@@ -316,7 +321,7 @@ impl<L: LockChoice, B> Pk2<B, L> {
 }
 
 impl<B, L: LockChoice> Pk2<B, L> {
-    pub fn open_file<P: AsRef<str>>(&self, path: P) -> OpenResult<File<B, L>> {
+    pub fn open_file<P: AsRef<str>>(&self, path: P) -> OpenResult<File<'_, B, L>> {
         let (chain, entry_idx, entry) = self
             .root_resolve_path_to_entry_and_parent(path)?
             .ok_or_else(|| IoError::new(IoErrorKind::InvalidData, "Expected a file entry"))?;
@@ -324,7 +329,7 @@ impl<B, L: LockChoice> Pk2<B, L> {
         Ok(File::new(self, chain, entry_idx))
     }
 
-    pub fn open_directory<P: AsRef<str>>(&self, path: P) -> OpenResult<Directory<B, L>> {
+    pub fn open_directory<P: AsRef<str>>(&self, path: P) -> OpenResult<Directory<'_, B, L>> {
         match self.root_resolve_path_to_entry_and_parent(path)? {
             Some((chain, entry_idx, entry)) => {
                 Self::is_dir(entry)?;
@@ -334,7 +339,7 @@ impl<B, L: LockChoice> Pk2<B, L> {
         }
     }
 
-    pub fn open_root_dir(&self) -> Directory<B, L> {
+    pub fn open_root_dir(&self) -> Directory<'_, B, L> {
         Directory::new(self, None, 0)
     }
 
@@ -368,7 +373,7 @@ where
     B: stdio::Read + stdio::Write + stdio::Seek,
     L: LockChoice,
 {
-    pub fn open_file_mut<P: AsRef<str>>(&mut self, path: P) -> OpenResult<FileMut<B, L>> {
+    pub fn open_file_mut<P: AsRef<str>>(&mut self, path: P) -> OpenResult<FileMut<'_, B, L>> {
         let (chain, entry_idx, entry) = self
             .root_resolve_path_to_entry_and_parent(path)?
             .ok_or_else(|| IoError::new(IoErrorKind::InvalidData, "Expected a file entry"))?;
@@ -396,7 +401,7 @@ where
         Ok(())
     }
 
-    pub fn create_file<P: AsRef<str>>(&mut self, path: P) -> OpenResult<FileMut<B, L>> {
+    pub fn create_file<P: AsRef<str>>(&mut self, path: P) -> OpenResult<FileMut<'_, B, L>> {
         let path = check_root(path.as_ref())?;
         let (chain, entry_idx, file_name) = self.stream.with_lock(|stream| {
             Self::create_entry_at(
