@@ -1,5 +1,5 @@
 use std::fs::FileTimes;
-use std::io::Write;
+use std::io::{stdout, Write};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
@@ -93,7 +93,7 @@ fn main() {
 
 fn extract(archive_path: Utf8PathBuf, key: String, out: Utf8PathBuf, write_time: bool) {
     let archive = Pk2::open(&archive_path, key)
-        .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
+        .unwrap_or_else(|e| panic!("failed to open archive at {:?}: {e}", archive_path));
     let folder = archive.open_directory("/").unwrap();
     println!("Extracting {:?} to {:?}.", archive_path, out);
     extract_files(folder, &out, write_time);
@@ -132,6 +132,9 @@ fn extract_files(folder: Directory<'_>, out_path: &Utf8Path, write_times: bool) 
             }
             DirEntry::Directory(dir) => {
                 let dir_name = dir.name();
+                if let "." | ".." = dir_name {
+                    continue;
+                }
                 let path = out_path.join(dir_name);
                 extract_files(dir, &path, write_times);
             }
@@ -142,9 +145,9 @@ fn extract_files(folder: Directory<'_>, out_path: &Utf8Path, write_times: bool) 
 fn repack(archive_path: Utf8PathBuf, key: String, output_key: String, out: Option<Utf8PathBuf>) {
     let out_archive_path = out.unwrap_or_else(|| archive_path.with_extension("repack.pk2"));
     let in_archive = Pk2::open(&archive_path, key)
-        .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive_path));
+        .unwrap_or_else(|e| panic!("failed to open archive at {:?}: {e}", archive_path));
     let mut out_archive = Pk2::create_new(&out_archive_path, output_key)
-        .unwrap_or_else(|_| panic!("failed to create archive at {:?}", out_archive_path));
+        .unwrap_or_else(|e| panic!("failed to create archive at {:?}: {e}", out_archive_path));
     let folder = in_archive.open_directory("/").unwrap();
     println!("Repacking {:?} into {:?}.", archive_path, out_archive_path);
     repack_files(&mut out_archive, folder, "/".as_ref());
@@ -163,7 +166,11 @@ fn repack_files(out_archive: &mut Pk2, folder: Directory<'_>, path: &Utf8Path) {
                 buf.clear();
             }
             DirEntry::Directory(dir) => {
-                let path = path.join(dir.name());
+                let dir_name = dir.name();
+                if let "." | ".." = dir_name {
+                    continue;
+                }
+                let path = path.join(dir_name);
                 repack_files(out_archive, dir, &path);
             }
         }
@@ -176,7 +183,7 @@ fn pack(directory: Utf8PathBuf, key: String, archive: Option<Utf8PathBuf>) {
         return;
     }
     let mut out_archive = Pk2::create_new(&out_archive_path, key)
-        .unwrap_or_else(|_| panic!("failed to create archive at {:?}", out_archive_path));
+        .unwrap_or_else(|e| panic!("failed to create archive at {:?}: {e}", out_archive_path));
     println!("Packing {:?} into {:?}.", directory, out_archive_path);
     pack_files(&mut out_archive, &directory, &directory);
 }
@@ -194,7 +201,7 @@ fn pack_files(out_archive: &mut Pk2, dir_path: &Utf8Path, base: &Utf8Path) {
             let mut file = std::fs::File::open(&path).unwrap();
             file.read_to_end(&mut buf).unwrap();
             out_archive
-                .create_file(&Utf8Path::new("/").join(path.strip_prefix(base).unwrap()))
+                .create_file(Utf8Path::new("/").join(path.strip_prefix(base).unwrap()))
                 .unwrap()
                 .write_all(&buf)
                 .unwrap();
@@ -205,22 +212,26 @@ fn pack_files(out_archive: &mut Pk2, dir_path: &Utf8Path, base: &Utf8Path) {
 
 fn list(archive: Utf8PathBuf, key: String, _write_time: bool) {
     let archive = Pk2::open(&archive, key)
-        .unwrap_or_else(|_| panic!("failed to open archive at {:?}", archive));
+        .unwrap_or_else(|e| panic!("failed to open archive at {:?}: {e}", archive));
     let folder = archive.open_directory("/").unwrap();
-    list_files(folder, "/".as_ref(), 1);
+    list_files(&mut stdout(), folder, "/".as_ref(), 0);
 }
 
-fn list_files(folder: Directory, path: &Utf8Path, ident_level: usize) {
-    println!("{path}");
+fn list_files(out: &mut impl Write, folder: Directory, path: &Utf8Path, mut ident_level: usize) {
+    writeln!(out, "{}{path}", " ".repeat(ident_level)).unwrap();
+    ident_level += path.as_os_str().to_str().unwrap_or_default().chars().count();
     for entry in folder.entries() {
         match entry {
             DirEntry::File(file) => {
-                println!("{}{}", " ".repeat(ident_level), file.name());
+                writeln!(out, "{}{}", " ".repeat(ident_level), file.name()).unwrap();
             }
             DirEntry::Directory(dir) => {
                 let dir_name = dir.name();
                 let path = path.join(dir_name);
-                list_files(dir, &path, path.as_os_str().len());
+                if let "." | ".." = dir_name {
+                    continue;
+                }
+                list_files(&mut *out, dir, &path, ident_level);
             }
         }
     }

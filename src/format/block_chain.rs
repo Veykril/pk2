@@ -9,6 +9,7 @@ use crate::format::{BlockOffset, ChainOffset, StreamOffset};
 
 /// A collection of [`PackBlock`]s where each block's next_block field points to
 /// the following block in the file. A PackBlockChain is never empty.
+#[derive(Debug)]
 pub struct PackBlockChain {
     blocks: Vec<(BlockOffset, PackBlock)>,
 }
@@ -122,7 +123,7 @@ impl ops::IndexMut<usize> for PackBlockChain {
 }
 
 /// A collection of 20 [`PackEntry`]s.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct PackBlock {
     entries: [PackEntry; Self::PK2_FILE_BLOCK_ENTRY_COUNT],
 }
@@ -132,11 +133,11 @@ impl PackBlock {
     pub const PK2_FILE_BLOCK_SIZE: usize =
         PackEntry::PK2_FILE_ENTRY_SIZE * Self::PK2_FILE_BLOCK_ENTRY_COUNT;
 
-    pub fn entries(&self) -> slice::Iter<PackEntry> {
+    pub fn entries(&self) -> slice::Iter<'_, PackEntry> {
         self.entries.iter()
     }
 
-    pub fn entries_mut(&mut self) -> slice::IterMut<PackEntry> {
+    pub fn entries_mut(&mut self) -> slice::IterMut<'_, PackEntry> {
         self.entries.iter_mut()
     }
 
