@@ -244,3 +244,644 @@ impl ChainIndex {
         if components.clone().count() == 0 { Ok(None) } else { Ok(Some((chain, components))) }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::num::NonZeroU64;
+
+    use super::*;
+    use crate::format::StreamOffset;
+    use crate::format::entry::PackEntry;
+
+    fn make_empty_block() -> PackBlock {
+        PackBlock::default()
+    }
+
+    fn make_root_block_with_entries(entries: Vec<(usize, PackEntry)>) -> PackBlock {
+        let mut block = PackBlock::default();
+        // Standard root block has "." and ".." entries
+        block[0] = PackEntry::new_directory(".", ChainOffset(NonZeroU64::new(256).unwrap()), None);
+        block[1] = PackEntry::new_directory("..", ChainOffset(NonZeroU64::new(256).unwrap()), None);
+        for (idx, entry) in entries {
+            block[idx] = entry;
+        }
+        block
+    }
+
+    #[test]
+    fn chain_index_insert_and_get() {
+        let mut index = ChainIndex::default();
+        let chain_offset = ChainOffset(NonZeroU64::new(256).unwrap());
+        let block = make_empty_block();
+        let chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        index.insert(chain_offset, chain);
+
+        assert!(index.get(chain_offset).is_some());
+    }
+
+    #[test]
+    fn chain_index_get_mut() {
+        let mut index = ChainIndex::default();
+        let chain_offset = ChainOffset(NonZeroU64::new(256).unwrap());
+        let block = make_empty_block();
+        let chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        index.insert(chain_offset, chain);
+
+        let chain_mut = index.get_mut(chain_offset);
+        assert!(chain_mut.is_some());
+    }
+
+    #[test]
+    fn chain_index_get_entry() {
+        let mut index = ChainIndex::default();
+        let chain_offset = ChainOffset(NonZeroU64::new(256).unwrap());
+        let mut block = make_empty_block();
+        block[5] = PackEntry::new_file(
+            "test.txt",
+            StreamOffset(NonZeroU64::new(1000).unwrap()),
+            100,
+            None,
+        );
+        let chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        index.insert(chain_offset, chain);
+
+        let entry = index.get_entry(chain_offset, 5);
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().name(), Some("test.txt"));
+    }
+
+    #[test]
+    fn chain_index_get_entry_mut() {
+        let mut index = ChainIndex::default();
+        let chain_offset = ChainOffset(NonZeroU64::new(256).unwrap());
+        let block = make_empty_block();
+        let chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        index.insert(chain_offset, chain);
+
+        {
+            let entry = index.get_entry_mut(chain_offset, 3).unwrap();
+            *entry = PackEntry::new_file(
+                "modified.txt",
+                StreamOffset(NonZeroU64::new(500).unwrap()),
+                50,
+                None,
+            );
+        }
+
+        assert_eq!(index.get_entry(chain_offset, 3).unwrap().name(), Some("modified.txt"));
+    }
+
+    #[test]
+    fn chain_index_get_entry_invalid_chain() {
+        let index = ChainIndex::default();
+        let invalid_offset = ChainOffset(NonZeroU64::new(9999).unwrap());
+        assert!(index.get_entry(invalid_offset, 0).is_none());
+    }
+
+    #[test]
+    fn chain_index_get_entry_invalid_index() {
+        let mut index = ChainIndex::default();
+        let chain_offset = ChainOffset(NonZeroU64::new(256).unwrap());
+        let block = make_empty_block();
+        let chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        index.insert(chain_offset, chain);
+
+        assert!(index.get_entry(chain_offset, 100).is_none());
+    }
+
+    #[test]
+    fn resolve_path_to_block_chain_index_at_single_component() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+        let subdir_offset = ChainOffset(NonZeroU64::new(5000).unwrap());
+
+        let root_block = make_root_block_with_entries(vec![(
+            2,
+            PackEntry::new_directory("subdir", subdir_offset, None),
+        )]);
+        let subdir_block = make_empty_block();
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+        index.insert(
+            subdir_offset,
+            PackBlockChain::from_blocks(vec![(
+                BlockOffset(NonZeroU64::new(5000).unwrap()),
+                subdir_block,
+            )]),
+        );
+
+        let result = index.resolve_path_to_block_chain_index_at(None, "subdir");
+        assert_eq!(result, Ok(subdir_offset));
+    }
+
+    #[test]
+    fn resolve_path_to_block_chain_index_at_nested_path() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+        let dir1_offset = ChainOffset(NonZeroU64::new(5000).unwrap());
+        let dir2_offset = ChainOffset(NonZeroU64::new(8000).unwrap());
+
+        let root_block = make_root_block_with_entries(vec![(
+            2,
+            PackEntry::new_directory("dir1", dir1_offset, None),
+        )]);
+
+        let mut dir1_block = make_empty_block();
+        dir1_block[0] = PackEntry::new_directory(".", dir1_offset, None);
+        dir1_block[1] = PackEntry::new_directory("..", root_offset, None);
+        dir1_block[2] = PackEntry::new_directory("dir2", dir2_offset, None);
+
+        let dir2_block = make_empty_block();
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+        index.insert(
+            dir1_offset,
+            PackBlockChain::from_blocks(vec![(
+                BlockOffset(NonZeroU64::new(5000).unwrap()),
+                dir1_block,
+            )]),
+        );
+        index.insert(
+            dir2_offset,
+            PackBlockChain::from_blocks(vec![(
+                BlockOffset(NonZeroU64::new(8000).unwrap()),
+                dir2_block,
+            )]),
+        );
+
+        let result = index.resolve_path_to_block_chain_index_at(None, "dir1/dir2");
+        assert_eq!(result, Ok(dir2_offset));
+    }
+
+    #[test]
+    fn resolve_path_to_block_chain_index_at_case_insensitive() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+        let subdir_offset = ChainOffset(NonZeroU64::new(5000).unwrap());
+
+        let root_block = make_root_block_with_entries(vec![(
+            2,
+            PackEntry::new_directory("SubDir", subdir_offset, None),
+        )]);
+        let subdir_block = make_empty_block();
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+        index.insert(
+            subdir_offset,
+            PackBlockChain::from_blocks(vec![(
+                BlockOffset(NonZeroU64::new(5000).unwrap()),
+                subdir_block,
+            )]),
+        );
+
+        // Should find with different case
+        assert_eq!(index.resolve_path_to_block_chain_index_at(None, "subdir"), Ok(subdir_offset));
+        assert_eq!(index.resolve_path_to_block_chain_index_at(None, "SUBDIR"), Ok(subdir_offset));
+    }
+
+    #[test]
+    fn resolve_path_to_block_chain_index_at_not_found() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+        let root_block = make_root_block_with_entries(vec![]);
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+
+        let result = index.resolve_path_to_block_chain_index_at(None, "nonexistent");
+        assert_eq!(result, Err(ChainLookupError::NotFound));
+    }
+
+    #[test]
+    fn resolve_path_to_block_chain_index_at_empty_component() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+        let dir1_offset = ChainOffset(NonZeroU64::new(5000).unwrap());
+
+        // Create root with dir1 so we can reach the empty component
+        let root_block = make_root_block_with_entries(vec![(
+            2,
+            PackEntry::new_directory("dir1", dir1_offset, None),
+        )]);
+
+        let mut dir1_block = make_empty_block();
+        dir1_block[0] = PackEntry::new_directory(".", dir1_offset, None);
+        dir1_block[1] = PackEntry::new_directory("..", root_offset, None);
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+        index.insert(
+            dir1_offset,
+            PackBlockChain::from_blocks(vec![(
+                BlockOffset(NonZeroU64::new(5000).unwrap()),
+                dir1_block,
+            )]),
+        );
+
+        // Path with empty component (double slash) - after dir1 exists, the empty component is detected
+        let result = index.resolve_path_to_block_chain_index_at(None, "dir1//dir2");
+        assert_eq!(result, Err(ChainLookupError::InvalidPath));
+    }
+
+    #[test]
+    fn resolve_path_to_block_chain_index_at_backslash_separator() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+        let dir1_offset = ChainOffset(NonZeroU64::new(5000).unwrap());
+        let dir2_offset = ChainOffset(NonZeroU64::new(8000).unwrap());
+
+        let root_block = make_root_block_with_entries(vec![(
+            2,
+            PackEntry::new_directory("dir1", dir1_offset, None),
+        )]);
+
+        let mut dir1_block = make_empty_block();
+        dir1_block[0] = PackEntry::new_directory(".", dir1_offset, None);
+        dir1_block[1] = PackEntry::new_directory("..", root_offset, None);
+        dir1_block[2] = PackEntry::new_directory("dir2", dir2_offset, None);
+
+        let dir2_block = make_empty_block();
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+        index.insert(
+            dir1_offset,
+            PackBlockChain::from_blocks(vec![(
+                BlockOffset(NonZeroU64::new(5000).unwrap()),
+                dir1_block,
+            )]),
+        );
+        index.insert(
+            dir2_offset,
+            PackBlockChain::from_blocks(vec![(
+                BlockOffset(NonZeroU64::new(8000).unwrap()),
+                dir2_block,
+            )]),
+        );
+
+        // Should work with backslash separator (Windows-style)
+        let result = index.resolve_path_to_block_chain_index_at(None, "dir1\\dir2");
+        assert_eq!(result, Ok(dir2_offset));
+    }
+
+    // resolve_path_to_parent tests
+
+    #[test]
+    fn resolve_path_to_parent_simple() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+        let root_block = make_root_block_with_entries(vec![]);
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+
+        let result = index.resolve_path_to_parent(None, "dir/file.txt");
+        // Should fail because "dir" doesn't exist
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_path_to_parent_no_slash() {
+        let index = ChainIndex::default();
+        let result = index.resolve_path_to_parent(None, "file.txt");
+        assert_eq!(result, Err(ChainLookupError::InvalidPath));
+    }
+
+    #[test]
+    fn resolve_path_to_parent_trailing_slash() {
+        let index = ChainIndex::default();
+        let result = index.resolve_path_to_parent(None, "dir/");
+        assert_eq!(result, Err(ChainLookupError::InvalidPath));
+    }
+
+    #[test]
+    fn resolve_path_to_entry_and_parent_file() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+
+        let root_block = make_root_block_with_entries(vec![(
+            2,
+            PackEntry::new_file(
+                "test.txt",
+                StreamOffset(NonZeroU64::new(10000).unwrap()),
+                500,
+                None,
+            ),
+        )]);
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+
+        let result = index.resolve_path_to_entry_and_parent(None, "root/test.txt");
+        // This should fail because "root" doesn't exist as a directory
+        // The path resolution expects the first component to be found
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_path_to_entry_and_parent_in_subdir() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+        let subdir_offset = ChainOffset(NonZeroU64::new(5000).unwrap());
+
+        let root_block = make_root_block_with_entries(vec![(
+            2,
+            PackEntry::new_directory("subdir", subdir_offset, None),
+        )]);
+
+        let mut subdir_block = make_empty_block();
+        subdir_block[0] = PackEntry::new_directory(".", subdir_offset, None);
+        subdir_block[1] = PackEntry::new_directory("..", root_offset, None);
+        subdir_block[2] = PackEntry::new_file(
+            "myfile.txt",
+            StreamOffset(NonZeroU64::new(10000).unwrap()),
+            200,
+            None,
+        );
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+        index.insert(
+            subdir_offset,
+            PackBlockChain::from_blocks(vec![(
+                BlockOffset(NonZeroU64::new(5000).unwrap()),
+                subdir_block,
+            )]),
+        );
+
+        let result = index.resolve_path_to_entry_and_parent(None, "subdir/myfile.txt");
+        assert!(result.is_ok());
+        let (parent_chain, entry_idx, entry) = result.unwrap();
+        assert_eq!(parent_chain, subdir_offset);
+        assert_eq!(entry_idx, 2);
+        assert_eq!(entry.name(), Some("myfile.txt"));
+    }
+
+    #[test]
+    fn resolve_path_to_entry_and_parent_not_found() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+        let subdir_offset = ChainOffset(NonZeroU64::new(5000).unwrap());
+
+        let root_block = make_root_block_with_entries(vec![(
+            2,
+            PackEntry::new_directory("subdir", subdir_offset, None),
+        )]);
+
+        let mut subdir_block = make_empty_block();
+        subdir_block[0] = PackEntry::new_directory(".", subdir_offset, None);
+        subdir_block[1] = PackEntry::new_directory("..", root_offset, None);
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+        index.insert(
+            subdir_offset,
+            PackBlockChain::from_blocks(vec![(
+                BlockOffset(NonZeroU64::new(5000).unwrap()),
+                subdir_block,
+            )]),
+        );
+
+        let result = index.resolve_path_to_entry_and_parent(None, "subdir/nonexistent.txt");
+        assert_eq!(result, Err(ChainLookupError::NotFound));
+    }
+
+    #[test]
+    fn validate_dir_path_until_all_exists() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+        let dir1_offset = ChainOffset(NonZeroU64::new(5000).unwrap());
+        let dir2_offset = ChainOffset(NonZeroU64::new(8000).unwrap());
+
+        let root_block = make_root_block_with_entries(vec![(
+            2,
+            PackEntry::new_directory("dir1", dir1_offset, None),
+        )]);
+
+        let mut dir1_block = make_empty_block();
+        dir1_block[0] = PackEntry::new_directory(".", dir1_offset, None);
+        dir1_block[1] = PackEntry::new_directory("..", root_offset, None);
+        dir1_block[2] = PackEntry::new_directory("dir2", dir2_offset, None);
+
+        let dir2_block = make_empty_block();
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+        index.insert(
+            dir1_offset,
+            PackBlockChain::from_blocks(vec![(
+                BlockOffset(NonZeroU64::new(5000).unwrap()),
+                dir1_block,
+            )]),
+        );
+        index.insert(
+            dir2_offset,
+            PackBlockChain::from_blocks(vec![(
+                BlockOffset(NonZeroU64::new(8000).unwrap()),
+                dir2_block,
+            )]),
+        );
+
+        // All components exist, should return None
+        let result = index.validate_dir_path_until(root_offset, "dir1/dir2");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn validate_dir_path_until_partial() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+        let dir1_offset = ChainOffset(NonZeroU64::new(5000).unwrap());
+
+        let root_block = make_root_block_with_entries(vec![(
+            2,
+            PackEntry::new_directory("dir1", dir1_offset, None),
+        )]);
+
+        let mut dir1_block = make_empty_block();
+        dir1_block[0] = PackEntry::new_directory(".", dir1_offset, None);
+        dir1_block[1] = PackEntry::new_directory("..", root_offset, None);
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+        index.insert(
+            dir1_offset,
+            PackBlockChain::from_blocks(vec![(
+                BlockOffset(NonZeroU64::new(5000).unwrap()),
+                dir1_block,
+            )]),
+        );
+
+        // dir1 exists but dir2/dir3 don't
+        let result = index.validate_dir_path_until(root_offset, "dir1/dir2/dir3");
+        assert!(result.is_ok());
+        let (chain, mut remaining) = result.unwrap().unwrap();
+        assert_eq!(chain, dir1_offset);
+        assert_eq!(remaining.next(), Some("dir2"));
+        assert_eq!(remaining.next(), Some("dir3"));
+        assert_eq!(remaining.next(), None);
+    }
+
+    #[test]
+    fn validate_dir_path_until_none_exist() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+        let root_block = make_root_block_with_entries(vec![]);
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+
+        let result = index.validate_dir_path_until(root_offset, "new1/new2/new3");
+        assert!(result.is_ok());
+        let (chain, mut remaining) = result.unwrap().unwrap();
+        assert_eq!(chain, root_offset);
+        assert_eq!(remaining.next(), Some("new1"));
+        assert_eq!(remaining.next(), Some("new2"));
+        assert_eq!(remaining.next(), Some("new3"));
+    }
+
+    #[test]
+    fn validate_dir_path_until_invalid_path() {
+        let mut index = ChainIndex::default();
+        let root_offset = ChainIndex::PK2_ROOT_CHAIN_OFFSET;
+        let dir1_offset = ChainOffset(NonZeroU64::new(5000).unwrap());
+
+        // Create root with dir1 so we can reach the empty component
+        let root_block = make_root_block_with_entries(vec![(
+            2,
+            PackEntry::new_directory("dir1", dir1_offset, None),
+        )]);
+
+        let mut dir1_block = make_empty_block();
+        dir1_block[0] = PackEntry::new_directory(".", dir1_offset, None);
+        dir1_block[1] = PackEntry::new_directory("..", root_offset, None);
+
+        index.insert(
+            root_offset,
+            PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
+        );
+        index.insert(
+            dir1_offset,
+            PackBlockChain::from_blocks(vec![(
+                BlockOffset(NonZeroU64::new(5000).unwrap()),
+                dir1_block,
+            )]),
+        );
+
+        // Empty component in path - after dir1 exists, the empty component is detected
+        let result = index.validate_dir_path_until(root_offset, "dir1//dir2");
+        assert!(matches!(result, Err(ChainLookupError::InvalidPath)));
+    }
+
+    #[test]
+    fn chain_index_parser_wants_read_at() {
+        let mut index = ChainIndex::default();
+        let offsets = vec![(ChainIndex::PK2_ROOT_CHAIN_OFFSET, ChainIndex::PK2_ROOT_BLOCK_OFFSET)];
+        let parser = ChainIndexParser::new(&mut index, offsets);
+
+        assert_eq!(parser.wants_read_at(), Some(ChainIndex::PK2_ROOT_BLOCK_OFFSET));
+    }
+
+    #[test]
+    fn chain_index_parser_wants_read_at_empty() {
+        let mut index = ChainIndex::default();
+        let parser = ChainIndexParser::new(&mut index, vec![]);
+
+        assert!(parser.wants_read_at().is_none());
+    }
+
+    #[test]
+    fn chain_index_parser_abandon() {
+        let mut index = ChainIndex::default();
+        let offsets = vec![
+            (ChainIndex::PK2_ROOT_CHAIN_OFFSET, ChainIndex::PK2_ROOT_BLOCK_OFFSET),
+            (
+                ChainOffset(NonZeroU64::new(5000).unwrap()),
+                BlockOffset(NonZeroU64::new(5000).unwrap()),
+            ),
+        ];
+        let parser = ChainIndexParser::new(&mut index, offsets.clone());
+
+        let abandoned = parser.abandon();
+        assert_eq!(abandoned.len(), 2);
+    }
+
+    #[test]
+    fn chain_index_parser_progress_empty_block() {
+        let mut index = ChainIndex::default();
+        let offsets = vec![(ChainIndex::PK2_ROOT_CHAIN_OFFSET, ChainIndex::PK2_ROOT_BLOCK_OFFSET)];
+        let mut parser = ChainIndexParser::new(&mut index, offsets);
+
+        let buffer = [0u8; PackBlock::PK2_FILE_BLOCK_SIZE];
+        let remaining = parser.progress(&buffer).unwrap();
+
+        // No more work to do after parsing empty block
+        assert_eq!(remaining, 0);
+
+        // Chain should be inserted
+        assert!(index.get(ChainIndex::PK2_ROOT_CHAIN_OFFSET).is_some());
+    }
+
+    #[test]
+    fn chain_index_parser_progress_discovers_subdirs() {
+        let mut index = ChainIndex::default();
+        let offsets = vec![(ChainIndex::PK2_ROOT_CHAIN_OFFSET, ChainIndex::PK2_ROOT_BLOCK_OFFSET)];
+        let mut parser = ChainIndexParser::new(&mut index, offsets);
+
+        // Create a block with a subdirectory
+        let mut block = PackBlock::default();
+        let subdir_offset = ChainOffset(NonZeroU64::new(5000).unwrap());
+        block[0] = PackEntry::new_directory(".", ChainIndex::PK2_ROOT_CHAIN_OFFSET, None);
+        block[1] = PackEntry::new_directory("..", ChainIndex::PK2_ROOT_CHAIN_OFFSET, None);
+        block[2] = PackEntry::new_directory("subdir", subdir_offset, None);
+
+        let mut buffer = [0u8; PackBlock::PK2_FILE_BLOCK_SIZE];
+        block.write_to(&mut buffer);
+
+        let remaining = parser.progress(&buffer).unwrap();
+
+        // Should have discovered the subdirectory and added it to the work queue
+        assert_eq!(remaining, 1);
+        assert_eq!(parser.wants_read_at(), Some(BlockOffset(NonZeroU64::new(5000).unwrap())));
+    }
+}
