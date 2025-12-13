@@ -1,10 +1,45 @@
 name: CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   test:
-    name: Cargo Test
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-nextest
+
+      - name: Cache Dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run CI checks
+        run: just ci
+
+  features:
+    name: Feature Combinations
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -12,18 +47,19 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - uses: taiki-e/install-action@v2
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install tools
+        uses: taiki-e/install-action@v2
         with:
           tool: just,cargo-nextest
 
-      - name: Install Rust toolchain
-        run: |
-          rustup update --no-self-update stable
-          rustup component add --toolchain stable rustfmt rust-src
-          rustup default stable
-
       - name: Cache Dependencies
-        uses: Swatinem/rust-cache@640a22190e7a783d4c409684cea558f081f92012
+        uses: Swatinem/rust-cache@v2
 
-      - name: Test
-        run: just ci
+      - name: Test feature combinations
+        run: just features
+
+      - name: Test with all features
+        run: just test-all-features
