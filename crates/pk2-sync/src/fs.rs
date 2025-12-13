@@ -103,15 +103,15 @@ where
     fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         let pos_data = self.pos_data();
         let rem_len = self.remaining_len();
-        if buf.len() < rem_len {
+        if buf.len() > rem_len {
             Err(io::Error::new(io::ErrorKind::UnexpectedEof, "failed to fill whole buffer"))
         } else {
             // FIXME: check that self.seek_pos doesnt overflow into other files
 
             self.archive.stream.with_lock(|stream| {
-                crate::io::read_at(stream, pos_data + self.seek_pos, &mut buf[..rem_len])
+                crate::io::read_exact_at(stream, pos_data + self.seek_pos, buf)
             })?;
-            self.seek_pos += rem_len as u64;
+            self.seek_pos += buf.len() as u64;
             Ok(())
         }
     }
@@ -435,28 +435,30 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
     }
 
     pub fn open_file(&self, path: &str) -> io::Result<File<'pk2, Buffer, L>> {
-        let (chain, entry_idx, entry) =
-            self.archive.chain_index.resolve_path_to_entry_and_parent(self.chain, path).map_err(
-                |e| {
-                    io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!("failed to open path {path:?}: {e}"),
-                    )
-                },
-            )?;
+        let (chain, entry_idx, entry) = self
+            .archive
+            .chain_index
+            .resolve_path_to_entry_and_parent(Some(self.pos_children()), path)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("failed to open path {path:?}: {e}"),
+                )
+            })?;
         Pk2::<Buffer, L>::is_file(entry).map(|_| File::new(self.archive, chain, entry_idx))
     }
 
     pub fn open_directory(&self, path: &str) -> io::Result<Directory<'pk2, Buffer, L>> {
-        let (chain, entry_idx, entry) =
-            self.archive.chain_index.resolve_path_to_entry_and_parent(self.chain, path).map_err(
-                |e| {
-                    io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!("failed to open path {path:?}: {e}"),
-                    )
-                },
-            )?;
+        let (chain, entry_idx, entry) = self
+            .archive
+            .chain_index
+            .resolve_path_to_entry_and_parent(Some(self.pos_children()), path)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("failed to open path {path:?}: {e}"),
+                )
+            })?;
 
         if entry.as_non_empty().is_some_and(|it| it.is_directory()) {
             Ok(Directory::new(self.archive, Some(chain), entry_idx))
@@ -466,15 +468,16 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
     }
 
     pub fn open(&self, path: &str) -> io::Result<DirEntry<'pk2, Buffer, L>> {
-        let (chain, entry_idx, entry) =
-            self.archive.chain_index.resolve_path_to_entry_and_parent(self.chain, path).map_err(
-                |e| {
-                    io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!("failed to open path {path:?}: {e}"),
-                    )
-                },
-            )?;
+        let (chain, entry_idx, entry) = self
+            .archive
+            .chain_index
+            .resolve_path_to_entry_and_parent(Some(self.pos_children()), path)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("failed to open path {path:?}: {e}"),
+                )
+            })?;
         DirEntry::from(entry, self.archive, chain, entry_idx)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no file or directory found"))
     }
@@ -497,15 +500,23 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
             for entry in dir.entries() {
                 match entry {
                     DirEntry::Directory(dir) => {
-                        path.push(dir.name());
+                        // Skip "." and ".." to prevent infinite recursion
+                        // FIXME: Entries should store if they are backlinks (creating cycles) when we populate the chain index
+                        // instead of us assuming only these two are backlinks
+                        let name = dir.name();
+                        if name == "." || name == ".." {
+                            continue;
+                        }
+                        path.push(name);
                         for_each_file_rec(path, &dir, cb)?;
+                        path.pop();
                     }
                     DirEntry::File(file) => {
                         path.push(file.name());
                         cb(path, file)?;
+                        path.pop();
                     }
                 }
-                path.pop();
             }
             Ok(())
         }
