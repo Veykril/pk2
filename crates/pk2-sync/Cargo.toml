@@ -5,3 +5,6 @@ edition = "2024"
 
 [dependencies]
 pk2 = { path = "../../", features = ["std"]}
+
+[dev-dependencies]
+pk2 = { path = "../../", features = ["std"] }
