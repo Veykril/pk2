@@ -184,3 +184,281 @@ impl ops::IndexMut<usize> for PackBlock {
         &mut self.entries[idx]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::num::NonZeroU64;
+
+    use super::*;
+
+    #[test]
+    fn pack_block_parse_empty_block() {
+        let buffer = [0u8; PackBlock::PK2_FILE_BLOCK_SIZE];
+        let block = PackBlock::parse(&buffer).unwrap();
+        for entry in block.entries() {
+            assert!(entry.is_empty());
+        }
+    }
+
+    #[test]
+    fn pack_block_write_read_roundtrip() {
+        let mut block = PackBlock::default();
+
+        // Set up some entries
+        block[0] =
+            PackEntry::new_directory("testdir", ChainOffset(NonZeroU64::new(1000).unwrap()), None);
+        block[1] = PackEntry::new_file(
+            "testfile.txt",
+            StreamOffset(NonZeroU64::new(2000).unwrap()),
+            500,
+            None,
+        );
+        block[19] = PackEntry::new_empty(NonZeroU64::new(5000).map(BlockOffset));
+
+        let mut buffer = [0u8; PackBlock::PK2_FILE_BLOCK_SIZE];
+        block.write_to(&mut buffer);
+
+        let parsed = PackBlock::parse(&buffer).unwrap();
+
+        assert!(parsed[0].is_directory());
+        assert_eq!(parsed[0].name(), Some("testdir"));
+        assert!(parsed[1].is_file());
+        assert_eq!(parsed[1].name(), Some("testfile.txt"));
+        assert!(parsed[2].is_empty());
+        assert_eq!(parsed[19].next_block(), NonZeroU64::new(5000).map(BlockOffset));
+    }
+
+    #[test]
+    #[should_panic]
+    fn pack_block_chain_from_empty_blocks_panics() {
+        let _ = PackBlockChain::from_blocks(vec![]);
+    }
+
+    #[test]
+    fn pack_block_chain_chain_index() {
+        let block = PackBlock::default();
+        let offset = BlockOffset(NonZeroU64::new(1234).unwrap());
+        let chain = PackBlockChain::from_blocks(vec![(offset, block)]);
+
+        // chain_index should equal the first block's offset
+        assert_eq!(chain.chain_index(), ChainOffset(NonZeroU64::new(1234).unwrap()));
+    }
+
+    #[test]
+    fn pack_block_chain_get_entry() {
+        let mut block = PackBlock::default();
+        block[5] =
+            PackEntry::new_file("test", StreamOffset(NonZeroU64::new(100).unwrap()), 50, None);
+
+        let chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        let entry = chain.get(5);
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().name(), Some("test"));
+    }
+
+    #[test]
+    fn pack_block_chain_get_entry_across_blocks() {
+        let mut block1 = PackBlock::default();
+        let mut block2 = PackBlock::default();
+
+        block1[0] =
+            PackEntry::new_file("first", StreamOffset(NonZeroU64::new(100).unwrap()), 10, None);
+        block2[0] =
+            PackEntry::new_file("second", StreamOffset(NonZeroU64::new(200).unwrap()), 20, None);
+
+        let chain = PackBlockChain::from_blocks(vec![
+            (BlockOffset(NonZeroU64::new(256).unwrap()), block1),
+            (BlockOffset(NonZeroU64::new(3000).unwrap()), block2),
+        ]);
+
+        // Entry 0 is in block 0
+        assert_eq!(chain.get(0).unwrap().name(), Some("first"));
+        // Entry 20 is in block 1 (entry 0 of that block)
+        assert_eq!(chain.get(20).unwrap().name(), Some("second"));
+    }
+
+    #[test]
+    fn pack_block_chain_get_entry_out_of_bounds() {
+        let block = PackBlock::default();
+        let chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        assert!(chain.get(20).is_none());
+        assert!(chain.get(100).is_none());
+    }
+
+    #[test]
+    fn pack_block_chain_get_mut() {
+        let block = PackBlock::default();
+        let mut chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        {
+            let entry = chain.get_mut(3).unwrap();
+            *entry = PackEntry::new_file(
+                "modified",
+                StreamOffset(NonZeroU64::new(999).unwrap()),
+                100,
+                None,
+            );
+        }
+
+        assert_eq!(chain.get(3).unwrap().name(), Some("modified"));
+    }
+
+    #[test]
+    fn pack_block_chain_contains_entry_index() {
+        let block = PackBlock::default();
+        let chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        assert!(chain.contains_entry_index(0));
+        assert!(chain.contains_entry_index(19));
+        assert!(!chain.contains_entry_index(20));
+        assert!(!chain.contains_entry_index(100));
+    }
+
+    #[test]
+    fn pack_block_chain_stream_offset_for_entry() {
+        let block = PackBlock::default();
+        let base_offset = BlockOffset(NonZeroU64::new(256).unwrap());
+        let chain = PackBlockChain::from_blocks(vec![(base_offset, block)]);
+
+        // Entry 0 should be at offset 256
+        let offset0 = chain.stream_offset_for_entry(0);
+        assert_eq!(offset0, Some(StreamOffset(NonZeroU64::new(256).unwrap())));
+
+        // Entry 1 should be at offset 256 + 128 = 384
+        let offset1 = chain.stream_offset_for_entry(1);
+        assert_eq!(offset1, Some(StreamOffset(NonZeroU64::new(384).unwrap())));
+
+        // Entry 5 should be at offset 256 + (5 * 128) = 896
+        let offset5 = chain.stream_offset_for_entry(5);
+        assert_eq!(offset5, Some(StreamOffset(NonZeroU64::new(896).unwrap())));
+
+        // Out of bounds
+        assert!(chain.stream_offset_for_entry(20).is_none());
+    }
+
+    #[test]
+    fn pack_block_chain_stream_offset_for_entry_multi_block() {
+        let block1 = PackBlock::default();
+        let block2 = PackBlock::default();
+        let offset1 = BlockOffset(NonZeroU64::new(256).unwrap());
+        let offset2 = BlockOffset(NonZeroU64::new(5000).unwrap());
+
+        let chain = PackBlockChain::from_blocks(vec![(offset1, block1), (offset2, block2)]);
+
+        // Entry 0 is in block 0 at offset 256
+        assert_eq!(
+            chain.stream_offset_for_entry(0),
+            Some(StreamOffset(NonZeroU64::new(256).unwrap()))
+        );
+
+        // Entry 20 is in block 1 (first entry), at offset 5000
+        assert_eq!(
+            chain.stream_offset_for_entry(20),
+            Some(StreamOffset(NonZeroU64::new(5000).unwrap()))
+        );
+
+        // Entry 21 is in block 1 at offset 5000 + 128 = 5128
+        assert_eq!(
+            chain.stream_offset_for_entry(21),
+            Some(StreamOffset(NonZeroU64::new(5128).unwrap()))
+        );
+    }
+
+    #[test]
+    fn pack_block_chain_find_block_chain_index_of() {
+        let mut block = PackBlock::default();
+        let child_chain = ChainOffset(NonZeroU64::new(9999).unwrap());
+        block[3] = PackEntry::new_directory("subdir", child_chain, None);
+
+        let chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        let result = chain.find_block_chain_index_of("subdir");
+        assert_eq!(result, Ok(child_chain));
+    }
+
+    #[test]
+    fn pack_block_chain_find_block_chain_index_of_case_insensitive() {
+        let mut block = PackBlock::default();
+        let child_chain = ChainOffset(NonZeroU64::new(9999).unwrap());
+        block[3] = PackEntry::new_directory("SubDir", child_chain, None);
+
+        let chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        // Should find regardless of case
+        assert_eq!(chain.find_block_chain_index_of("subdir"), Ok(child_chain));
+        assert_eq!(chain.find_block_chain_index_of("SUBDIR"), Ok(child_chain));
+        assert_eq!(chain.find_block_chain_index_of("SubDir"), Ok(child_chain));
+    }
+
+    #[test]
+    fn pack_block_chain_find_block_chain_index_of_not_found() {
+        let block = PackBlock::default();
+        let chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        let result = chain.find_block_chain_index_of("nonexistent");
+        assert_eq!(result, Err(ChainLookupError::NotFound));
+    }
+
+    #[test]
+    fn pack_block_chain_find_block_chain_index_of_file_not_directory() {
+        let mut block = PackBlock::default();
+        // Add a file, not a directory
+        block[0] =
+            PackEntry::new_file("myfile", StreamOffset(NonZeroU64::new(100).unwrap()), 50, None);
+
+        let chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        // Looking for "myfile" as a directory should fail
+        let result = chain.find_block_chain_index_of("myfile");
+        assert_eq!(result, Err(ChainLookupError::NotFound));
+    }
+
+    #[test]
+    fn pack_block_chain_last_entry_mut() {
+        let block = PackBlock::default();
+        let mut chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block)]);
+
+        // Last entry is entry 19
+        let last = chain.last_entry_mut();
+        *last = PackEntry::new_file("last", StreamOffset(NonZeroU64::new(999).unwrap()), 1, None);
+
+        assert_eq!(chain[19].name(), Some("last"));
+    }
+
+    #[test]
+    fn pack_block_chain_push_and_link() {
+        let mut block1 = PackBlock::default();
+        block1[0] =
+            PackEntry::new_file("first", StreamOffset(NonZeroU64::new(100).unwrap()), 10, None);
+
+        let mut chain =
+            PackBlockChain::from_blocks(vec![(BlockOffset(NonZeroU64::new(256).unwrap()), block1)]);
+
+        let mut block2 = PackBlock::default();
+        block2[0] =
+            PackEntry::new_file("second", StreamOffset(NonZeroU64::new(200).unwrap()), 20, None);
+        let new_offset = BlockOffset(NonZeroU64::new(5000).unwrap());
+
+        chain.push_and_link(new_offset, block2);
+
+        // Chain should now have 40 entries
+        assert_eq!(chain.num_entries(), 40);
+
+        // Last entry of first block should have next_block set
+        assert_eq!(chain[19].next_block(), Some(new_offset));
+
+        // Can access entries in the second block
+        assert_eq!(chain[20].name(), Some("second"));
+    }
+}

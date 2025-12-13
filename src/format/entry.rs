@@ -402,4 +402,207 @@ mod test {
             }
         );
     }
+
+    #[test]
+    fn pack_entry_write_read_roundtrip_empty() {
+        let original = PackEntry::new_empty(None);
+        let mut buffer = [0u8; PackEntry::PK2_FILE_ENTRY_SIZE];
+        original.write_to(&mut buffer);
+        let parsed = PackEntry::parse(&buffer).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn pack_entry_write_read_roundtrip_empty_with_next_block() {
+        let original = PackEntry::new_empty(NonZeroU64::new(9999).map(BlockOffset));
+        let mut buffer = [0u8; PackEntry::PK2_FILE_ENTRY_SIZE];
+        original.write_to(&mut buffer);
+        let parsed = PackEntry::parse(&buffer).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn pack_entry_write_read_roundtrip_directory() {
+        let original = PackEntry::new_directory(
+            "testdir",
+            ChainOffset(NonZeroU64::new(5000).unwrap()),
+            NonZeroU64::new(8000).map(BlockOffset),
+        );
+        let mut buffer = [0u8; PackEntry::PK2_FILE_ENTRY_SIZE];
+        original.write_to(&mut buffer);
+        let parsed = PackEntry::parse(&buffer).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn pack_entry_write_read_roundtrip_file() {
+        let original = PackEntry::new_file(
+            "testfile.txt",
+            StreamOffset(NonZeroU64::new(10000).unwrap()),
+            5000,
+            NonZeroU64::new(20000).map(BlockOffset),
+        );
+        let mut buffer = [0u8; PackEntry::PK2_FILE_ENTRY_SIZE];
+        original.write_to(&mut buffer);
+        let parsed = PackEntry::parse(&buffer).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn pack_entry_write_read_roundtrip_file_no_next_block() {
+        let original = PackEntry::new_file(
+            "noblock.dat",
+            StreamOffset(NonZeroU64::new(256).unwrap()),
+            1024,
+            None,
+        );
+        let mut buffer = [0u8; PackEntry::PK2_FILE_ENTRY_SIZE];
+        original.write_to(&mut buffer);
+        let parsed = PackEntry::parse(&buffer).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn pack_entry_children_returns_chain_offset_for_directory() {
+        let chain = ChainOffset(NonZeroU64::new(12345).unwrap());
+        let entry = PackEntry::new_directory("dir", chain, None);
+        assert_eq!(entry.children(), Some(chain));
+    }
+
+    #[test]
+    fn pack_entry_children_returns_none_for_file() {
+        let entry =
+            PackEntry::new_file("file", StreamOffset(NonZeroU64::new(100).unwrap()), 50, None);
+        assert!(entry.children().is_none());
+    }
+
+    #[test]
+    fn pack_entry_children_returns_none_for_empty() {
+        let entry = PackEntry::new_empty(None);
+        assert!(entry.children().is_none());
+    }
+
+    #[test]
+    fn pack_entry_next_block() {
+        let entry_with = PackEntry::new_empty(NonZeroU64::new(1000).map(BlockOffset));
+        let entry_without = PackEntry::new_empty(None);
+
+        assert_eq!(entry_with.next_block(), NonZeroU64::new(1000).map(BlockOffset));
+        assert!(entry_without.next_block().is_none());
+    }
+
+    #[test]
+    fn pack_entry_set_next_block() {
+        let mut entry = PackEntry::new_empty(None);
+        assert!(entry.next_block().is_none());
+
+        entry.set_next_block(BlockOffset(NonZeroU64::new(5000).unwrap()));
+        assert_eq!(entry.next_block(), Some(BlockOffset(NonZeroU64::new(5000).unwrap())));
+    }
+
+    #[test]
+    fn pack_entry_clear() {
+        let mut entry = PackEntry::new_file(
+            "myfile.txt",
+            StreamOffset(NonZeroU64::new(100).unwrap()),
+            50,
+            NonZeroU64::new(200).map(BlockOffset),
+        );
+
+        let old = entry.clear();
+
+        // Old entry should be the original
+        assert!(old.is_file());
+        assert_eq!(old.name(), Some("myfile.txt"));
+
+        // Current entry should be empty but preserve next_block
+        assert!(entry.is_empty());
+        assert_eq!(entry.next_block(), NonZeroU64::new(200).map(BlockOffset));
+    }
+
+    // NonEmptyEntry tests
+
+    #[test]
+    fn non_empty_entry_set_name_success() {
+        let mut entry =
+            PackEntry::new_file("old.txt", StreamOffset(NonZeroU64::new(100).unwrap()), 50, None);
+        let inner = entry.as_non_empty_mut().unwrap();
+        assert!(inner.set_name("new.txt").is_ok());
+        assert_eq!(inner.name(), "new.txt");
+    }
+
+    #[test]
+    fn non_empty_entry_set_name_too_long() {
+        let mut entry =
+            PackEntry::new_file("old.txt", StreamOffset(NonZeroU64::new(100).unwrap()), 50, None);
+        let inner = entry.as_non_empty_mut().unwrap();
+        let long_name = "a".repeat(82); // > 81 bytes
+        assert!(inner.set_name(&long_name).is_err());
+        // Name should be unchanged
+        assert_eq!(inner.name(), "old.txt");
+    }
+
+    #[test]
+    fn non_empty_entry_set_file_data() {
+        let mut entry =
+            PackEntry::new_file("file.txt", StreamOffset(NonZeroU64::new(100).unwrap()), 50, None);
+        let inner = entry.as_non_empty_mut().unwrap();
+
+        let new_pos = StreamOffset(NonZeroU64::new(9999).unwrap());
+        assert!(inner.set_file_data(new_pos, 1234).is_ok());
+        assert_eq!(inner.file_data(), Some((new_pos, 1234)));
+    }
+
+    #[test]
+    fn non_empty_entry_set_file_data_on_directory_fails() {
+        let mut entry =
+            PackEntry::new_directory("dir", ChainOffset(NonZeroU64::new(100).unwrap()), None);
+        let inner = entry.as_non_empty_mut().unwrap();
+
+        let new_pos = StreamOffset(NonZeroU64::new(9999).unwrap());
+        assert!(inner.set_file_data(new_pos, 1234).is_err());
+    }
+
+    #[test]
+    fn non_empty_entry_directory_children_offset() {
+        let chain = ChainOffset(NonZeroU64::new(5000).unwrap());
+        let entry = PackEntry::new_directory("dir", chain, None);
+        let inner = entry.as_non_empty().unwrap();
+        assert_eq!(inner.directory_children_offset(), Some(chain));
+    }
+
+    #[test]
+    fn non_empty_entry_directory_children_offset_returns_none_for_file() {
+        let entry =
+            PackEntry::new_file("file", StreamOffset(NonZeroU64::new(100).unwrap()), 50, None);
+        let inner = entry.as_non_empty().unwrap();
+        assert!(inner.directory_children_offset().is_none());
+    }
+
+    #[test]
+    fn non_empty_entry_file_data() {
+        let pos = StreamOffset(NonZeroU64::new(12345).unwrap());
+        let entry = PackEntry::new_file("file", pos, 9999, None);
+        let inner = entry.as_non_empty().unwrap();
+        assert_eq!(inner.file_data(), Some((pos, 9999)));
+    }
+
+    #[test]
+    fn non_empty_entry_file_data_returns_none_for_directory() {
+        let entry =
+            PackEntry::new_directory("dir", ChainOffset(NonZeroU64::new(100).unwrap()), None);
+        let inner = entry.as_non_empty().unwrap();
+        assert!(inner.file_data().is_none());
+    }
+
+    #[test]
+    fn pack_entry_parse_invalid_type() {
+        let mut buffer = [0u8; PackEntry::PK2_FILE_ENTRY_SIZE];
+        buffer[0] = 0xFF; // Invalid type
+        let result = PackEntry::parse(&buffer);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.0, 0xFF);
+        assert!(format!("{}", err).contains("0xff"));
+    }
 }

@@ -306,13 +306,100 @@ pub const S: [[u32; 256]; 4] = [
     ],
 ];
 
-#[test]
-fn roundtrip() {
-    let bf = Blowfish::new("testkey".as_bytes()).unwrap();
-    let data = "test data".as_bytes();
-    let mut enc = data.to_vec();
-    bf.encrypt(&mut enc);
-    assert_ne!(&enc, data);
-    bf.decrypt(&mut enc);
-    assert_eq!(&enc, data);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_lenght() {
+        // Key must be at least 4 bytes
+        assert!(matches!(Blowfish::new(b""), Err(InvalidKey)));
+        assert!(matches!(Blowfish::new(b"a"), Err(InvalidKey)));
+        assert!(matches!(Blowfish::new(b"ab"), Err(InvalidKey)));
+        assert!(matches!(Blowfish::new(b"abc"), Err(InvalidKey)));
+        // Key must be at most 56 bytes
+        let long_key = [0u8; 57];
+        assert!(matches!(Blowfish::new(&long_key), Err(InvalidKey)));
+    }
+
+    #[test]
+    fn encrypt_empty_data() {
+        let bf = Blowfish::new(b"testkey").unwrap();
+        let mut data = vec![];
+        bf.encrypt(&mut data);
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn encrypt_partial_block_unchanged() {
+        // Data not aligned to 8 bytes should leave remainder unchanged
+        let bf = Blowfish::new(b"testkey").unwrap();
+        let original = b"hello".to_vec(); // 5 bytes, less than one block
+        let mut data = original.clone();
+        bf.encrypt(&mut data);
+        // Since 5 < 8, no full blocks, data should be unchanged
+        assert_eq!(data, original);
+    }
+
+    #[test]
+    fn encrypt_exact_block() {
+        let bf = Blowfish::new(b"testkey").unwrap();
+        let original = b"12345678".to_vec(); // exactly 8 bytes
+        let mut data = original.clone();
+        bf.encrypt(&mut data);
+        assert_ne!(data, original);
+        bf.decrypt(&mut data);
+        assert_eq!(data, original);
+    }
+
+    #[test]
+    fn encrypt_multiple_blocks() {
+        let bf = Blowfish::new(b"testkey").unwrap();
+        let original = b"12345678abcdefgh".to_vec(); // 16 bytes = 2 blocks
+        let mut data = original.clone();
+        bf.encrypt(&mut data);
+        assert_ne!(data, original);
+        bf.decrypt(&mut data);
+        assert_eq!(data, original);
+    }
+
+    #[test]
+    fn encrypt_with_remainder() {
+        let bf = Blowfish::new(b"testkey").unwrap();
+        // 10 bytes = 1 full block (8) + 2 remainder
+        let original = b"1234567890".to_vec();
+        let mut data = original.clone();
+        bf.encrypt(&mut data);
+        // First 8 bytes should be encrypted, last 2 unchanged
+        assert_ne!(&data[..8], &original[..8]);
+        assert_eq!(&data[8..], &original[8..]);
+        bf.decrypt(&mut data);
+        assert_eq!(data, original);
+    }
+
+    #[test]
+    fn decrypt_with_wrong_key_produces_garbage() {
+        let bf_encrypt = Blowfish::new(b"correctkey").unwrap();
+        let bf_decrypt = Blowfish::new(b"wrongkey").unwrap();
+
+        let original = b"testdata".to_vec();
+        let mut data = original.clone();
+
+        bf_encrypt.encrypt(&mut data);
+        bf_decrypt.decrypt(&mut data);
+
+        assert_ne!(data, original);
+    }
+
+    #[test]
+    fn roundtrip() {
+        let bf = Blowfish::new(b"testkey").unwrap();
+        let original: Vec<u8> = (0..256).map(|i| i as u8).collect();
+        let mut data = original.clone();
+
+        bf.encrypt(&mut data);
+        assert_ne!(data, original);
+        bf.decrypt(&mut data);
+        assert_eq!(data, original);
+    }
 }
