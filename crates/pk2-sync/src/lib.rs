@@ -10,7 +10,7 @@ use std::{fs as stdfs, io as stdio};
 
 use pk2::block_chain::PackBlock;
 use pk2::blowfish::Blowfish;
-use pk2::chain_index::ChainIndex;
+use pk2::chain_index::{ChainIndex, ChainIndexParser};
 use pk2::entry::PackEntry;
 use pk2::header::PackHeader;
 use pk2::{ChainOffset, StreamOffset};
@@ -271,7 +271,27 @@ where
             &block,
         )?;
 
-        let chain_index = ChainIndex::read_sync(&mut stream, blowfish.as_deref())?;
+        let bf = blowfish.as_deref();
+        let mut chain_index = ChainIndex::default();
+        let mut fsm = ChainIndexParser::new(
+            &mut chain_index,
+            vec![(ChainIndex::PK2_ROOT_CHAIN_OFFSET, ChainIndex::PK2_ROOT_BLOCK_OFFSET)],
+        );
+        let mut buffer = [0; PackBlock::PK2_FILE_BLOCK_SIZE];
+        while let Some(offset) = fsm.wants_read_at() {
+            stream.seek(std::io::SeekFrom::Start(offset.0.get()))?;
+            stream.read_exact(&mut buffer)?;
+            if let Some(bf) = bf {
+                bf.decrypt(&mut buffer);
+            }
+            fsm.progress(&buffer).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Failed to parse block at offset {}: {}", offset.0, e),
+                )
+            })?;
+        }
+
         Ok(Pk2 { stream: L::new_locked(stream), blowfish, chain_index, 유령: PhantomData })
     }
 }
