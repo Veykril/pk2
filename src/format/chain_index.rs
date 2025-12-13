@@ -149,7 +149,10 @@ impl ChainIndex {
             let parent_index = self.resolve_path_to_block_chain_index_at(current_chain, rest)?;
             Ok((parent_index, name))
         } else {
-            Err(ChainLookupError::InvalidPath)
+            if path.is_empty() {
+                return Err(ChainLookupError::InvalidPath);
+            }
+            Ok((current_chain.unwrap_or(Self::PK2_ROOT_CHAIN_OFFSET), path))
         }
     }
 
@@ -570,7 +573,16 @@ mod tests {
     #[test]
     fn resolve_path_to_parent_no_slash() {
         let index = ChainIndex::default();
+        // Single-component paths should work - parent is root, name is the component
         let result = index.resolve_path_to_parent(None, "file.txt");
+        assert_eq!(result, Ok((ChainIndex::PK2_ROOT_CHAIN_OFFSET, "file.txt")));
+    }
+
+    #[test]
+    fn resolve_path_to_parent_empty_path() {
+        let index = ChainIndex::default();
+        // Empty path should fail
+        let result = index.resolve_path_to_parent(None, "");
         assert_eq!(result, Err(ChainLookupError::InvalidPath));
     }
 

@@ -459,10 +459,17 @@ where
             .validate_dir_path_until(chain, path)
             .map_err(|e| IoError::new(IoErrorKind::InvalidInput, e))?
             .ok_or_else(|| IoError::from(IoErrorKind::AlreadyExists))?;
+
         while let Some(component) = components.next() {
             let current_chain = chain_index
                 .get_mut(current_chain_index)
                 .ok_or_else(|| IoError::from(IoErrorKind::InvalidInput))?;
+
+            // Check if a file or directory with this name already exists
+            if current_chain.entries().any(|e| e.name_eq_ignore_ascii_case(component)) {
+                return Err(IoErrorKind::AlreadyExists.into());
+            }
+
             let empty_pos = current_chain.entries().position(PackEntry::is_empty);
             let chain_entry_idx = if let Some(idx) = empty_pos {
                 idx
