@@ -416,6 +416,11 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
         self.archive.chain_index.get(chain).expect("invalid dir object")
     }
 
+    pub fn is_backlink(&self) -> bool {
+        // TODO: Record backlinks in the graph when building the chain index
+        matches!(self.entry().name(), "." | "..")
+    }
+
     pub fn name(&self) -> &'pk2 str {
         self.entry().name()
     }
@@ -498,13 +503,10 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
             for entry in dir.entries() {
                 match entry {
                     DirEntry::Directory(dir) => {
-                        // Skip "." and ".." to prevent infinite recursion
-                        // FIXME: Entries should store if they are backlinks (creating cycles) when we populate the chain index
-                        // instead of us assuming only these two are backlinks
-                        let name = dir.name();
-                        if name == "." || name == ".." {
+                        if dir.is_backlink() {
                             continue;
                         }
+                        let name = dir.name();
                         path.push(name);
                         for_each_file_rec(path, &dir, cb)?;
                         path.pop();
@@ -533,7 +535,7 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
             .map(move |(idx, _)| File::new(archive, chain, idx))
     }
 
-    /// Returns an iterator over all items in this directory excluding `.` and
+    /// Returns an iterator over all items in this directory including backlinks like `.` and
     /// `..`.
     pub fn entries(
         &self,

@@ -53,12 +53,13 @@ impl<'bm> ChainIndexParser<'bm> {
         if let Some(nb) = block.next_block() {
             self.offsets_to_process.push((chain_index, nb))
         }
-        // put all folder offsets of this block into the stack to parse them next
-        // Note, we might still put duplicate blocks on here which results in extra unnecessary
-        // work.
-        // This should only occur for a bad archives though.
-        // The only expected duplicates are chain heads, like `..` and `.` which point back to the
-        // parent or self. These we filter out appropriately below though.
+        // put all folder offsets of this block into the stack to parse them
+        // next Note, we might still put duplicate blocks on here which results
+        // in extra unnecessary work. This should only occur for a bad archives
+        // though. The only expected duplicates are chain heads, like `..` and
+        // `.` which point back to the parent or self. These we filter out
+        // appropriately below though as they are links to proper chains, not
+        // random blocks within chains.
         self.offsets_to_process.extend(
             block
                 .entries()

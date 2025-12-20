@@ -131,10 +131,10 @@ fn extract_files(folder: Directory<'_>, out_path: &Utf8Path, write_times: bool) 
                 buf.clear();
             }
             DirEntry::Directory(dir) => {
-                let dir_name = dir.name();
-                if let "." | ".." = dir_name {
+                if dir.is_backlink() {
                     continue;
                 }
+                let dir_name = dir.name();
                 let path = out_path.join(dir_name);
                 extract_files(dir, &path, write_times);
             }
@@ -166,10 +166,10 @@ fn repack_files(out_archive: &mut Pk2, folder: Directory<'_>, path: &Utf8Path) {
                 buf.clear();
             }
             DirEntry::Directory(dir) => {
-                let dir_name = dir.name();
-                if let "." | ".." = dir_name {
+                if dir.is_backlink() {
                     continue;
                 }
+                let dir_name = dir.name();
                 let path = path.join(dir_name);
                 repack_files(out_archive, dir, &path);
             }
@@ -226,11 +226,11 @@ fn list_files(out: &mut impl Write, folder: Directory, path: &Utf8Path, mut iden
                 writeln!(out, "{}{}", " ".repeat(ident_level), file.name()).unwrap();
             }
             DirEntry::Directory(dir) => {
-                let dir_name = dir.name();
-                let path = path.join(dir_name);
-                if let "." | ".." = dir_name {
+                if dir.is_backlink() {
                     continue;
                 }
+                let dir_name = dir.name();
+                let path = path.join(dir_name);
                 list_files(&mut *out, dir, &path, ident_level);
             }
         }
