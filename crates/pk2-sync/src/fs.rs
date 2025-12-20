@@ -18,6 +18,7 @@ pub struct File<'pk2, Buffer, L: LockChoice> {
     chain: ChainOffset,
     /// The index of this file in the chain
     entry_index: usize,
+    /// Relative seek pos to the file entry offset
     seek_pos: u64,
 }
 
@@ -70,7 +71,7 @@ impl<'pk2, Buffer, L: LockChoice> File<'pk2, Buffer, L> {
     }
 
     fn remaining_len(&self) -> usize {
-        (self.size() as u64 - self.seek_pos) as usize
+        (self.size() as u64).saturating_sub(self.seek_pos) as usize
     }
 }
 
@@ -92,7 +93,6 @@ where
         let pos_data = self.pos_data();
         let rem_len = self.remaining_len();
         let len = buf.len().min(rem_len);
-        // FIXME: check that self.seek_pos doesnt overflow into other files
         let n = self.archive.stream.with_lock(|stream| {
             crate::io::read_at(stream, pos_data + self.seek_pos, &mut buf[..len])
         })?;
@@ -106,8 +106,6 @@ where
         if buf.len() > rem_len {
             Err(io::Error::new(io::ErrorKind::UnexpectedEof, "failed to fill whole buffer"))
         } else {
-            // FIXME: check that self.seek_pos doesnt overflow into other files
-
             self.archive.stream.with_lock(|stream| {
                 crate::io::read_exact_at(stream, pos_data + self.seek_pos, buf)
             })?;
@@ -438,7 +436,7 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
         let (chain, entry_idx, entry) = self
             .archive
             .chain_index
-            .resolve_path_to_entry_and_parent(Some(self.pos_children()), path)
+            .resolve_path_to_entry_and_parent(self.pos_children(), path)
             .map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::NotFound,
@@ -452,7 +450,7 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
         let (chain, entry_idx, entry) = self
             .archive
             .chain_index
-            .resolve_path_to_entry_and_parent(Some(self.pos_children()), path)
+            .resolve_path_to_entry_and_parent(self.pos_children(), path)
             .map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::NotFound,
@@ -471,7 +469,7 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
         let (chain, entry_idx, entry) = self
             .archive
             .chain_index
-            .resolve_path_to_entry_and_parent(Some(self.pos_children()), path)
+            .resolve_path_to_entry_and_parent(self.pos_children(), path)
             .map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::NotFound,

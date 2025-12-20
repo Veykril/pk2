@@ -137,7 +137,7 @@ impl ChainIndex {
 
     pub fn resolve_path_to_parent<'path>(
         &self,
-        current_chain: Option<ChainOffset>,
+        current_chain: ChainOffset,
         path: &'path str,
     ) -> ChainLookupResult<(ChainOffset, &'path str)> {
         let components = path.rsplit_once(['/', '\\']);
@@ -152,7 +152,7 @@ impl ChainIndex {
             if path.is_empty() {
                 return Err(ChainLookupError::InvalidPath);
             }
-            Ok((current_chain.unwrap_or(Self::PK2_ROOT_CHAIN_OFFSET), path))
+            Ok((current_chain, path))
         }
     }
 
@@ -161,7 +161,7 @@ impl ChainIndex {
     /// entry_index, entry)
     pub fn resolve_path_to_entry_and_parent(
         &self,
-        current_chain: Option<ChainOffset>,
+        current_chain: ChainOffset,
         path: &str,
     ) -> ChainLookupResult<(ChainOffset, usize, &PackEntry)> {
         self.resolve_path_to_parent(current_chain, path).and_then(|(parent_index, name)| {
@@ -178,7 +178,7 @@ impl ChainIndex {
 
     pub fn resolve_path_to_entry_and_parent_mut(
         &mut self,
-        current_chain: Option<ChainOffset>,
+        current_chain: ChainOffset,
         path: &str,
     ) -> ChainLookupResult<(ChainOffset, usize, &mut PackEntry)> {
         self.resolve_path_to_parent(current_chain, path).and_then(move |(parent_index, name)| {
@@ -197,22 +197,18 @@ impl ChainIndex {
     /// blockchain returning the index of the last blockchain.
     pub fn resolve_path_to_block_chain_index_at(
         &self,
-        current_chain: Option<ChainOffset>,
+        current_chain: ChainOffset,
         path: &str,
     ) -> ChainLookupResult<ChainOffset> {
-        path.split(['/', '\\']).try_fold(
-            // FIXME: is this correct?
-            current_chain.unwrap_or(Self::PK2_ROOT_CHAIN_OFFSET),
-            |idx, component| {
-                if component.is_empty() {
-                    return Err(ChainLookupError::InvalidPath);
-                }
-                self.chains
-                    .get(&idx)
-                    .ok_or(ChainLookupError::InvalidChainOffset)?
-                    .find_block_chain_index_of(component)
-            },
-        )
+        path.split(['/', '\\']).try_fold(current_chain, |idx, component| {
+            if component.is_empty() {
+                return Err(ChainLookupError::InvalidPath);
+            }
+            self.chains
+                .get(&idx)
+                .ok_or(ChainLookupError::InvalidChainOffset)?
+                .find_block_chain_index_of(component)
+        })
     }
 
     /// Traverses the path until it hits a non-existent component and returns
@@ -386,7 +382,8 @@ mod tests {
             )]),
         );
 
-        let result = index.resolve_path_to_block_chain_index_at(None, "subdir");
+        let result =
+            index.resolve_path_to_block_chain_index_at(ChainIndex::PK2_ROOT_CHAIN_OFFSET, "subdir");
         assert_eq!(result, Ok(subdir_offset));
     }
 
@@ -428,7 +425,8 @@ mod tests {
             )]),
         );
 
-        let result = index.resolve_path_to_block_chain_index_at(None, "dir1/dir2");
+        let result = index
+            .resolve_path_to_block_chain_index_at(ChainIndex::PK2_ROOT_CHAIN_OFFSET, "dir1/dir2");
         assert_eq!(result, Ok(dir2_offset));
     }
 
@@ -457,8 +455,14 @@ mod tests {
         );
 
         // Should find with different case
-        assert_eq!(index.resolve_path_to_block_chain_index_at(None, "subdir"), Ok(subdir_offset));
-        assert_eq!(index.resolve_path_to_block_chain_index_at(None, "SUBDIR"), Ok(subdir_offset));
+        assert_eq!(
+            index.resolve_path_to_block_chain_index_at(ChainIndex::PK2_ROOT_CHAIN_OFFSET, "subdir"),
+            Ok(subdir_offset)
+        );
+        assert_eq!(
+            index.resolve_path_to_block_chain_index_at(ChainIndex::PK2_ROOT_CHAIN_OFFSET, "SUBDIR"),
+            Ok(subdir_offset)
+        );
     }
 
     #[test]
@@ -472,7 +476,8 @@ mod tests {
             PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
         );
 
-        let result = index.resolve_path_to_block_chain_index_at(None, "nonexistent");
+        let result = index
+            .resolve_path_to_block_chain_index_at(ChainIndex::PK2_ROOT_CHAIN_OFFSET, "nonexistent");
         assert_eq!(result, Err(ChainLookupError::NotFound));
     }
 
@@ -505,7 +510,8 @@ mod tests {
         );
 
         // Path with empty component (double slash) - after dir1 exists, the empty component is detected
-        let result = index.resolve_path_to_block_chain_index_at(None, "dir1//dir2");
+        let result = index
+            .resolve_path_to_block_chain_index_at(ChainIndex::PK2_ROOT_CHAIN_OFFSET, "dir1//dir2");
         assert_eq!(result, Err(ChainLookupError::InvalidPath));
     }
 
@@ -548,7 +554,8 @@ mod tests {
         );
 
         // Should work with backslash separator (Windows-style)
-        let result = index.resolve_path_to_block_chain_index_at(None, "dir1\\dir2");
+        let result = index
+            .resolve_path_to_block_chain_index_at(ChainIndex::PK2_ROOT_CHAIN_OFFSET, "dir1\\dir2");
         assert_eq!(result, Ok(dir2_offset));
     }
 
@@ -565,7 +572,8 @@ mod tests {
             PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
         );
 
-        let result = index.resolve_path_to_parent(None, "dir/file.txt");
+        let result =
+            index.resolve_path_to_parent(ChainIndex::PK2_ROOT_CHAIN_OFFSET, "dir/file.txt");
         // Should fail because "dir" doesn't exist
         assert!(result.is_err());
     }
@@ -574,7 +582,7 @@ mod tests {
     fn resolve_path_to_parent_no_slash() {
         let index = ChainIndex::default();
         // Single-component paths should work - parent is root, name is the component
-        let result = index.resolve_path_to_parent(None, "file.txt");
+        let result = index.resolve_path_to_parent(ChainIndex::PK2_ROOT_CHAIN_OFFSET, "file.txt");
         assert_eq!(result, Ok((ChainIndex::PK2_ROOT_CHAIN_OFFSET, "file.txt")));
     }
 
@@ -582,14 +590,14 @@ mod tests {
     fn resolve_path_to_parent_empty_path() {
         let index = ChainIndex::default();
         // Empty path should fail
-        let result = index.resolve_path_to_parent(None, "");
+        let result = index.resolve_path_to_parent(ChainIndex::PK2_ROOT_CHAIN_OFFSET, "");
         assert_eq!(result, Err(ChainLookupError::InvalidPath));
     }
 
     #[test]
     fn resolve_path_to_parent_trailing_slash() {
         let index = ChainIndex::default();
-        let result = index.resolve_path_to_parent(None, "dir/");
+        let result = index.resolve_path_to_parent(ChainIndex::PK2_ROOT_CHAIN_OFFSET, "dir/");
         assert_eq!(result, Err(ChainLookupError::InvalidPath));
     }
 
@@ -613,7 +621,8 @@ mod tests {
             PackBlockChain::from_blocks(vec![(ChainIndex::PK2_ROOT_BLOCK_OFFSET, root_block)]),
         );
 
-        let result = index.resolve_path_to_entry_and_parent(None, "root/test.txt");
+        let result = index
+            .resolve_path_to_entry_and_parent(ChainIndex::PK2_ROOT_CHAIN_OFFSET, "root/test.txt");
         // This should fail because "root" doesn't exist as a directory
         // The path resolution expects the first component to be found
         assert!(result.is_err());
@@ -652,7 +661,10 @@ mod tests {
             )]),
         );
 
-        let result = index.resolve_path_to_entry_and_parent(None, "subdir/myfile.txt");
+        let result = index.resolve_path_to_entry_and_parent(
+            ChainIndex::PK2_ROOT_CHAIN_OFFSET,
+            "subdir/myfile.txt",
+        );
         assert!(result.is_ok());
         let (parent_chain, entry_idx, entry) = result.unwrap();
         assert_eq!(parent_chain, subdir_offset);
@@ -687,7 +699,10 @@ mod tests {
             )]),
         );
 
-        let result = index.resolve_path_to_entry_and_parent(None, "subdir/nonexistent.txt");
+        let result = index.resolve_path_to_entry_and_parent(
+            ChainIndex::PK2_ROOT_CHAIN_OFFSET,
+            "subdir/nonexistent.txt",
+        );
         assert_eq!(result, Err(ChainLookupError::NotFound));
     }
 

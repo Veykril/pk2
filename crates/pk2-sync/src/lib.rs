@@ -295,7 +295,7 @@ impl<L: LockChoice, B> Pk2<B, L> {
             return Ok(None);
         }
         self.chain_index
-            .resolve_path_to_entry_and_parent(None, path)
+            .resolve_path_to_entry_and_parent(ChainIndex::PK2_ROOT_CHAIN_OFFSET, path)
             .map(Some)
             .map_err(|e| IoError::new(IoErrorKind::InvalidData, e))
     }
@@ -309,7 +309,7 @@ impl<L: LockChoice, B> Pk2<B, L> {
             return Ok(None);
         }
         self.chain_index
-            .resolve_path_to_entry_and_parent_mut(None, path)
+            .resolve_path_to_entry_and_parent_mut(ChainIndex::PK2_ROOT_CHAIN_OFFSET, path)
             .map(Some)
             .map_err(|e| IoError::new(IoErrorKind::InvalidData, e))
     }
