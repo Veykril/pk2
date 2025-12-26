@@ -432,6 +432,33 @@ where
         Ok(FileMut::new(self, chain, entry_idx))
     }
 
+    /// Creates a file at the given path, or truncates it if it already exists.
+    ///
+    /// If the file already exists, it will be opened for writing with its
+    /// contents discarded. The existing file entry is retained.
+    /// If the file does not exist, a new file is created.
+    pub fn create_file_truncate<P: AsRef<str>>(
+        &mut self,
+        path: P,
+    ) -> OpenResult<FileMut<'_, B, L>> {
+        let path_str = path.as_ref();
+        // Try to open the file if it exists
+        match self.root_resolve_path_to_entry_and_parent(path_str) {
+            Ok(Some((chain, entry_idx, entry))) if entry.is_file() => {
+                // File exists, return a truncated FileMut
+                Ok(FileMut::new_truncated(self, chain, entry_idx))
+            }
+            Ok(Some(_)) => {
+                // Path exists but is not a file (e.g., directory)
+                Err(IoError::new(IoErrorKind::InvalidData, "Expected a file entry"))
+            }
+            Ok(None) | Err(_) => {
+                // File doesn't exist, create it
+                self.create_file(path_str)
+            }
+        }
+    }
+
     /// This function traverses the whole path creating anything that does not
     /// yet exist returning the last created entry. This means using parent and
     /// current dir parts in a path that in the end directs to an already

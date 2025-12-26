@@ -135,6 +135,8 @@ where
     entry_index: usize,
     data: Cursor<Vec<u8>>,
     update_modify_time: bool,
+    // if true, don't fetch existing data on read/write - start fresh
+    truncated: bool,
 }
 
 impl<'pk2, Buffer, L> FileMut<'pk2, Buffer, L>
@@ -153,6 +155,24 @@ where
             entry_index,
             data: Cursor::new(Vec::new()),
             update_modify_time: true,
+            truncated: false,
+        }
+    }
+
+    /// Creates a new `FileMut` that ignores existing file data.
+    /// Any writes will completely replace the file contents.
+    pub(super) fn new_truncated(
+        archive: &'pk2 mut Pk2<Buffer, L>,
+        chain: ChainOffset,
+        entry_index: usize,
+    ) -> Self {
+        FileMut {
+            archive,
+            chain,
+            entry_index,
+            data: Cursor::new(Vec::new()),
+            update_modify_time: true,
+            truncated: true,
         }
     }
 
@@ -226,7 +246,11 @@ where
     }
 
     fn try_fetch_data(&mut self) -> io::Result<()> {
-        if self.data.get_ref().is_empty() && self.size() > 0 { self.fetch_data() } else { Ok(()) }
+        if !self.truncated && self.data.get_ref().is_empty() && self.size() > 0 {
+            self.fetch_data()
+        } else {
+            Ok(())
+        }
     }
 }
 

@@ -421,7 +421,7 @@ fn patch_file(archive: &mut Pk2, file_path: &Utf8Path, archive_path: &Utf8Path, 
     file.read_to_end(&mut buf).unwrap();
 
     archive
-        .create_file(archive_path)
+        .create_file_truncate(archive_path)
         .unwrap_or_else(|e| panic!("failed to create file at {:?} in archive: {e}", archive_path))
         .write_all(&buf)
         .unwrap();
@@ -445,7 +445,7 @@ fn patch_directory(archive: &mut Pk2, dir_path: &Utf8Path, archive_path: &Utf8Pa
                 let mut file = std::fs::File::open(&path).unwrap();
                 file.read_to_end(&mut buf).unwrap();
                 archive
-                    .create_file(&target_path)
+                    .create_file_truncate(&target_path)
                     .unwrap_or_else(|e| {
                         panic!("failed to create file at {:?} in archive: {e}", target_path)
                     })

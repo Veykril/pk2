@@ -171,6 +171,36 @@ fn create_file_fails_if_exists() {
 }
 
 #[test]
+fn create_file_truncate_new_file() {
+    let mut archive = Pk2::create_new_in_memory("test").unwrap();
+    {
+        let mut file = archive.create_file_truncate("/new.txt").unwrap();
+        file.write_all(b"Hello").unwrap();
+    }
+
+    let contents = archive.read("/new.txt").unwrap();
+    assert_eq!(contents, b"Hello");
+}
+
+#[test]
+fn create_file_truncate_existing_file() {
+    let mut archive = Pk2::create_new_in_memory("test").unwrap();
+    {
+        let mut file = archive.create_file("/exists.txt").unwrap();
+        file.write_all(b"Original content that is longer").unwrap();
+    }
+
+    // Truncate and write shorter content
+    {
+        let mut file = archive.create_file_truncate("/exists.txt").unwrap();
+        file.write_all(b"Short").unwrap();
+    }
+
+    let contents = archive.read("/exists.txt").unwrap();
+    assert_eq!(contents, b"Short");
+}
+
+#[test]
 fn open_file_mut_existing() {
     let mut archive = Pk2::create_new_in_memory("test").unwrap();
     {
