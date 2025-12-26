@@ -14,7 +14,7 @@ exclude = ["pk2_mate/*"]
 [dependencies]
 encoding_rs = { version = "0.8", optional = true }
 hashbrown = { version = "0.16", default-features = false }
-rustc-hash = "*"
+rustc-hash = "2.1.1"
 
 [features]
 default = ["euc-kr"]
