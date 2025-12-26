@@ -1,6 +1,6 @@
 [package]
 name = "pk2"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Lukas Wirth <lukastw97@gmail.com>"]
 edition = "2024"
 description = "Crate for interacting with Silkroad Online's pk2 archive format"
@@ -12,8 +12,8 @@ categories = ["encoding", "filesystem", "parser-implementations"]
 exclude = ["pk2_mate/*"]
 
 [dependencies]
-encoding_rs = { version = "^0.8", optional = true }
-hashbrown = { version = "0.15.3", default-features = false }
+encoding_rs = { version = "0.8", optional = true }
+hashbrown = { version = "0.16", default-features = false }
 rustc-hash = "*"
 
 [features]
