@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fs::FileTimes;
 use std::io::{Read, Seek, Write, stdout};
 
@@ -28,6 +29,12 @@ enum Commands {
         /// If passed, writes file times to the extracted files.
         #[arg(short, long)]
         write_time: bool,
+        /// Sets the maximum depth to extract.
+        #[arg(short = 'd', long)]
+        depth: Option<usize>,
+        /// Sets the path to use as the root for extraction.
+        #[arg(short, long)]
+        path: Option<Utf8PathBuf>,
     },
     /// Repackages a pk2 archive into a new archive, removing fragmentation.
     Repack {
@@ -82,8 +89,8 @@ fn main() {
         return;
     };
     match command {
-        Commands::Extract { archive, key, out, write_time } => {
-            extract(archive, key, out, write_time);
+        Commands::Extract { archive, key, out, write_time, depth, path } => {
+            extract(archive, key, out, write_time, depth, path);
         }
         Commands::Repack { archive, key, output_key, out } => {
             repack(archive, key, output_key, out);
@@ -97,16 +104,32 @@ fn main() {
     }
 }
 
-fn extract(archive_path: Utf8PathBuf, key: String, out: Utf8PathBuf, write_time: bool) {
+fn extract(
+    archive_path: Utf8PathBuf,
+    key: String,
+    out: Utf8PathBuf,
+    write_time: bool,
+    max_depth: Option<usize>,
+    path: Option<Utf8PathBuf>,
+) {
     let archive = Pk2::open_readonly(&archive_path, key)
         .unwrap_or_else(|e| panic!("failed to open archive at {:?}: {e}", archive_path));
-    let folder = archive.open_directory("/").unwrap();
+    let mut root_path = Utf8Path::new("/").to_owned();
+    if let Some(p) = path {
+        root_path.push(&p);
+    }
+    let folder = archive.open_directory(&root_path).unwrap();
     println!("Extracting {:?} to {:?}.", archive_path, out);
-    extract_files(folder, &out, write_time);
+    extract_files(folder, &out, write_time, 0, max_depth);
 }
 
-fn extract_files(folder: Directory<'_, impl Read + Seek>, out_path: &Utf8Path, write_times: bool) {
-    use std::io::Read;
+fn extract_files(
+    folder: Directory<'_, impl Read + Seek>,
+    out_path: &Utf8Path,
+    write_times: bool,
+    current_depth: usize,
+    max_depth: Option<usize>,
+) {
     let _ = std::fs::create_dir(out_path);
     let mut buf = Vec::new();
     for entry in folder.entries() {
@@ -140,9 +163,14 @@ fn extract_files(folder: Directory<'_, impl Read + Seek>, out_path: &Utf8Path, w
                 if dir.is_backlink() {
                     continue;
                 }
+                if let Some(max) = max_depth
+                    && current_depth >= max
+                {
+                    continue;
+                }
                 let dir_name = dir.name();
                 let path = out_path.join(dir_name);
-                extract_files(dir, &path, write_times);
+                extract_files(dir, &path, write_times, current_depth + 1, max_depth);
             }
         }
     }
@@ -243,7 +271,14 @@ fn list_files(
 ) {
     writeln!(out, "{}{path}", " ".repeat(ident_level)).unwrap();
     ident_level += path.as_os_str().to_str().unwrap_or_default().chars().count();
-    for entry in folder.entries() {
+    let mut collect = folder.entries().collect::<Vec<_>>();
+    collect.sort_by(|a, b| match (a, b) {
+        (DirEntry::Directory(a), DirEntry::Directory(b)) => a.name().cmp(b.name()),
+        (DirEntry::File(a), DirEntry::File(b)) => a.name().cmp(b.name()),
+        (DirEntry::Directory(_), DirEntry::File(_)) => Ordering::Less,
+        (DirEntry::File(_), DirEntry::Directory(_)) => Ordering::Greater,
+    });
+    for entry in collect {
         match entry {
             DirEntry::File(file) => {
                 writeln!(out, "{}{}", " ".repeat(ident_level), file.name()).unwrap();
