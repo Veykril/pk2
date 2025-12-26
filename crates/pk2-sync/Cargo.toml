@@ -2,6 +2,13 @@
 name = "pk2-sync"
 version = "0.1.0"
 edition = "2024"
+authors = ["Lukas Wirth <lukastw97@gmail.com>"]
+description = "Crate for interacting with Silkroad Online's pk2 archive format"
+homepage = "https://github.com/veykril/pk2"
+repository = "https://github.com/veykril/pk2"
+license = "MIT"
+readme = "../../README.md"
+categories = ["filesystem"]
 
 [dependencies]
 pk2 = { path = "../../", features = ["std"], version = "0.3.0" }
