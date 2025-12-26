@@ -95,6 +95,9 @@ enum Commands {
         /// Sets the output path in the archive to paste into.
         #[arg(short, long)]
         output: Utf8PathBuf,
+        /// If passed, only prints what would be patched without making changes.
+        #[arg(short, long)]
+        dry: bool,
     },
 }
 
@@ -116,8 +119,8 @@ fn main() {
         Commands::List { archive, key, write_time, depth, path } => {
             list(archive, key, write_time, depth, path);
         }
-        Commands::Patch { archive, key, input, output } => {
-            patch(archive, key, input, output);
+        Commands::Patch { archive, key, input, output, dry } => {
+            patch(archive, key, input, output, dry);
         }
     }
 }
@@ -370,25 +373,48 @@ fn list_files(
     }
 }
 
-fn patch(archive_path: Utf8PathBuf, key: String, input: Utf8PathBuf, output: Utf8PathBuf) {
+fn patch(
+    archive_path: Utf8PathBuf,
+    key: String,
+    input: Utf8PathBuf,
+    output: Utf8PathBuf,
+    dry: bool,
+) {
     let mut archive = Pk2::open(&archive_path, key)
         .unwrap_or_else(|e| panic!("failed to open archive at {:?}: {e}", archive_path));
 
     let mut output_path = Utf8Path::new("/").to_owned();
     output_path.push(&output);
 
+    let dry_prefix = if dry { "[DRY RUN] " } else { "" };
+
     if input.is_file() {
-        println!("Patching file {:?} into {:?} at {:?}.", input, archive_path, output_path);
-        patch_file(&mut archive, &input, &output_path);
+        println!(
+            "{}Patching file {:?} into {:?} at {:?}.",
+            dry_prefix, input, archive_path, output_path
+        );
+        match std::env::current_dir().ok().and_then(|cwd| input.strip_prefix(&cwd).ok()) {
+            Some(relative_path) => output_path.push(relative_path),
+            None => output_path.push(input.file_name().unwrap()),
+        }
+        patch_file(&mut archive, &input, &output_path, dry);
     } else if input.is_dir() {
-        println!("Patching directory {:?} into {:?} at {:?}.", input, archive_path, output_path);
-        patch_directory(&mut archive, &input, &output_path);
+        println!(
+            "{}Patching directory {:?} into {:?} at {:?}.",
+            dry_prefix, input, archive_path, output_path
+        );
+        patch_directory(&mut archive, &input, &output_path, dry);
     } else {
         eprintln!("Input path {:?} is neither a file nor a directory.", input);
     }
 }
 
-fn patch_file(archive: &mut Pk2, file_path: &Utf8Path, archive_path: &Utf8Path) {
+fn patch_file(archive: &mut Pk2, file_path: &Utf8Path, archive_path: &Utf8Path, dry: bool) {
+    if dry {
+        println!("  Would patch: {:?} -> {:?}", file_path, archive_path);
+        return;
+    }
+
     let mut buf = Vec::new();
     let mut file = std::fs::File::open(file_path)
         .unwrap_or_else(|e| panic!("failed to open file at {:?}: {e}", file_path));
@@ -401,7 +427,7 @@ fn patch_file(archive: &mut Pk2, file_path: &Utf8Path, archive_path: &Utf8Path) 
         .unwrap();
 }
 
-fn patch_directory(archive: &mut Pk2, dir_path: &Utf8Path, archive_path: &Utf8Path) {
+fn patch_directory(archive: &mut Pk2, dir_path: &Utf8Path, archive_path: &Utf8Path, dry: bool) {
     let mut buf = Vec::new();
     for entry in std::fs::read_dir(dir_path).unwrap() {
         let entry = entry.unwrap();
@@ -411,18 +437,22 @@ fn patch_directory(archive: &mut Pk2, dir_path: &Utf8Path, archive_path: &Utf8Pa
         let target_path = archive_path.join(file_name);
 
         if ty.is_dir() {
-            patch_directory(archive, &path, &target_path);
+            patch_directory(archive, &path, &target_path, dry);
         } else if ty.is_file() {
-            let mut file = std::fs::File::open(&path).unwrap();
-            file.read_to_end(&mut buf).unwrap();
-            archive
-                .create_file(&target_path)
-                .unwrap_or_else(|e| {
-                    panic!("failed to create file at {:?} in archive: {e}", target_path)
-                })
-                .write_all(&buf)
-                .unwrap();
-            buf.clear();
+            if dry {
+                println!("  Would patch: {:?} -> {:?}", path, target_path);
+            } else {
+                let mut file = std::fs::File::open(&path).unwrap();
+                file.read_to_end(&mut buf).unwrap();
+                archive
+                    .create_file(&target_path)
+                    .unwrap_or_else(|e| {
+                        panic!("failed to create file at {:?} in archive: {e}", target_path)
+                    })
+                    .write_all(&buf)
+                    .unwrap();
+                buf.clear();
+            }
         }
     }
 }
