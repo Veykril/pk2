@@ -1,5 +1,5 @@
 use std::fs::FileTimes;
-use std::io::{stdout, Write};
+use std::io::{Read, Seek, Write, stdout};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
@@ -67,6 +67,12 @@ enum Commands {
         /// If passed, shows file times.
         #[arg(short, long)]
         write_time: bool,
+        /// Sets the maximum depth to list.
+        #[arg(short = 'd', long)]
+        depth: Option<usize>,
+        /// Sets the path to use as the root for listing.
+        #[arg(short, long)]
+        path: Option<Utf8PathBuf>,
     },
 }
 
@@ -85,21 +91,21 @@ fn main() {
         Commands::Pack { directory, key, archive } => {
             pack(directory, key, archive);
         }
-        Commands::List { archive, key, write_time } => {
-            list(archive, key, write_time);
+        Commands::List { archive, key, write_time, depth, path } => {
+            list(archive, key, write_time, depth, path);
         }
     }
 }
 
 fn extract(archive_path: Utf8PathBuf, key: String, out: Utf8PathBuf, write_time: bool) {
-    let archive = Pk2::open(&archive_path, key)
+    let archive = Pk2::open_readonly(&archive_path, key)
         .unwrap_or_else(|e| panic!("failed to open archive at {:?}: {e}", archive_path));
     let folder = archive.open_directory("/").unwrap();
     println!("Extracting {:?} to {:?}.", archive_path, out);
     extract_files(folder, &out, write_time);
 }
 
-fn extract_files(folder: Directory<'_>, out_path: &Utf8Path, write_times: bool) {
+fn extract_files(folder: Directory<'_, impl Read + Seek>, out_path: &Utf8Path, write_times: bool) {
     use std::io::Read;
     let _ = std::fs::create_dir(out_path);
     let mut buf = Vec::new();
@@ -144,7 +150,7 @@ fn extract_files(folder: Directory<'_>, out_path: &Utf8Path, write_times: bool) 
 
 fn repack(archive_path: Utf8PathBuf, key: String, output_key: String, out: Option<Utf8PathBuf>) {
     let out_archive_path = out.unwrap_or_else(|| archive_path.with_extension("repack.pk2"));
-    let in_archive = Pk2::open(&archive_path, key)
+    let in_archive = Pk2::open_readonly(&archive_path, key)
         .unwrap_or_else(|e| panic!("failed to open archive at {:?}: {e}", archive_path));
     let mut out_archive = Pk2::create_new(&out_archive_path, output_key)
         .unwrap_or_else(|e| panic!("failed to create archive at {:?}: {e}", out_archive_path));
@@ -153,7 +159,7 @@ fn repack(archive_path: Utf8PathBuf, key: String, output_key: String, out: Optio
     repack_files(&mut out_archive, folder, "/".as_ref());
 }
 
-fn repack_files(out_archive: &mut Pk2, folder: Directory<'_>, path: &Utf8Path) {
+fn repack_files(out_archive: &mut Pk2, folder: Directory<'_, impl Read + Seek>, path: &Utf8Path) {
     use std::io::{Read, Write};
     let mut buf = Vec::new();
     for entry in folder.entries() {
@@ -210,14 +216,31 @@ fn pack_files(out_archive: &mut Pk2, dir_path: &Utf8Path, base: &Utf8Path) {
     }
 }
 
-fn list(archive: Utf8PathBuf, key: String, _write_time: bool) {
-    let archive = Pk2::open(&archive, key)
+fn list(
+    archive: Utf8PathBuf,
+    key: String,
+    _write_time: bool,
+    max_depth: Option<usize>,
+    path: Option<Utf8PathBuf>,
+) {
+    let archive = Pk2::open_readonly(&archive, key)
         .unwrap_or_else(|e| panic!("failed to open archive at {:?}: {e}", archive));
-    let folder = archive.open_directory("/").unwrap();
-    list_files(&mut stdout(), folder, "/".as_ref(), 0);
+    let mut root_path = Utf8Path::new("/").to_owned();
+    if let Some(p) = path {
+        root_path.push(&p);
+    }
+    let folder = archive.open_directory(&root_path).unwrap();
+    list_files(&mut stdout(), folder, &root_path, 0, 0, max_depth);
 }
 
-fn list_files(out: &mut impl Write, folder: Directory, path: &Utf8Path, mut ident_level: usize) {
+fn list_files(
+    out: &mut impl Write,
+    folder: Directory<'_, impl Read + Seek>,
+    path: &Utf8Path,
+    mut ident_level: usize,
+    current_depth: usize,
+    max_depth: Option<usize>,
+) {
     writeln!(out, "{}{path}", " ".repeat(ident_level)).unwrap();
     ident_level += path.as_os_str().to_str().unwrap_or_default().chars().count();
     for entry in folder.entries() {
@@ -229,9 +252,14 @@ fn list_files(out: &mut impl Write, folder: Directory, path: &Utf8Path, mut iden
                 if dir.is_backlink() {
                     continue;
                 }
+                if let Some(max) = max_depth
+                    && current_depth >= max
+                {
+                    continue;
+                }
                 let dir_name = dir.name();
                 let path = path.join(dir_name);
-                list_files(&mut *out, dir, &path, ident_level);
+                list_files(&mut *out, dir, &path, ident_level, current_depth + 1, max_depth);
             }
         }
     }

@@ -2,7 +2,7 @@
 name = "pk2_mate"
 version = "0.0.0"
 authors = ["Lukas Wirth <lukastw97@gmail.com>"]
-edition = "2021"
+edition = "2024"
 publish = false
 
 [dependencies]
