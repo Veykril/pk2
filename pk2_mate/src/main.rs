@@ -4,7 +4,7 @@ use std::io::{Read, Seek, Write, stdout};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
-use pk2_sync::sync::{DirEntry, Directory, Pk2};
+use pk2_sync::sync::{DirEntry, Directory, File as Pk2File, Pk2};
 
 #[derive(Parser, Debug)]
 #[command(version, author, about)]
@@ -136,9 +136,61 @@ fn extract(
     if let Some(p) = path {
         root_path.push(&p);
     }
-    let folder = archive.open_directory(&root_path).unwrap();
-    println!("Extracting {:?} to {:?}.", archive_path, out);
-    extract_files(folder, &out, write_time, 0, max_depth);
+
+    // Try to open as a directory first
+    match archive.open_directory(&root_path) {
+        Ok(folder) => {
+            println!("Extracting {:?} to {:?}.", archive_path, out);
+            extract_files(folder, &out, write_time, 0, max_depth);
+        }
+        Err(_) => {
+            // If it fails, try to open as a file
+            match archive.open_file(&root_path) {
+                Ok(file) => {
+                    println!("Extracting file {:?} to {:?}.", root_path, out);
+                    extract_single_file(file, &out, write_time);
+                }
+                Err(e) => {
+                    panic!("failed to open path {:?} in archive: {e}", root_path);
+                }
+            }
+        }
+    }
+}
+
+fn extract_single_file<R: Read + Seek>(
+    mut file: Pk2File<'_, R>,
+    out_path: &Utf8Path,
+    write_times: bool,
+) {
+    // Ensure output directory exists
+    let _ = std::fs::create_dir_all(out_path);
+
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).unwrap();
+
+    let file_path = out_path.join(file.name());
+
+    let os_file = std::fs::File::create(&file_path);
+    let res = os_file.and_then(|mut os_file| {
+        os_file.write_all(&buf)?;
+        if write_times {
+            let mut times = FileTimes::new();
+            if let Some(time) = file.modify_time() {
+                times = times.set_modified(time);
+            }
+            if let Some(time) = file.access_time() {
+                times = times.set_accessed(time);
+            }
+            if let Err(e) = os_file.set_times(times) {
+                eprintln!("Failed writing file times at {file_path:?}: {e}");
+            }
+        }
+        Ok(())
+    });
+    if let Err(e) = res {
+        eprintln!("Failed writing file at {file_path:?}: {e}");
+    }
 }
 
 fn extract_files(
