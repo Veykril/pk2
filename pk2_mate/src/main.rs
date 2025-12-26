@@ -81,6 +81,21 @@ enum Commands {
         #[arg(short, long)]
         path: Option<Utf8PathBuf>,
     },
+    /// Patches a file or directory from the local filesystem into an existing pk2 archive.
+    Patch {
+        /// Sets the archive to open.
+        #[arg(short, long)]
+        archive: Utf8PathBuf,
+        /// Sets the blowfish key.
+        #[arg(short, long, default_value = "169841")]
+        key: String,
+        /// Sets the input path on the local filesystem to copy from.
+        #[arg(short, long)]
+        input: Utf8PathBuf,
+        /// Sets the output path in the archive to paste into.
+        #[arg(short, long)]
+        output: Utf8PathBuf,
+    },
 }
 
 fn main() {
@@ -100,6 +115,9 @@ fn main() {
         }
         Commands::List { archive, key, write_time, depth, path } => {
             list(archive, key, write_time, depth, path);
+        }
+        Commands::Patch { archive, key, input, output } => {
+            patch(archive, key, input, output);
         }
     }
 }
@@ -296,6 +314,63 @@ fn list_files(
                 let path = path.join(dir_name);
                 list_files(&mut *out, dir, &path, ident_level, current_depth + 1, max_depth);
             }
+        }
+    }
+}
+
+fn patch(archive_path: Utf8PathBuf, key: String, input: Utf8PathBuf, output: Utf8PathBuf) {
+    let mut archive = Pk2::open(&archive_path, key)
+        .unwrap_or_else(|e| panic!("failed to open archive at {:?}: {e}", archive_path));
+
+    let mut output_path = Utf8Path::new("/").to_owned();
+    output_path.push(&output);
+
+    if input.is_file() {
+        println!("Patching file {:?} into {:?} at {:?}.", input, archive_path, output_path);
+        patch_file(&mut archive, &input, &output_path);
+    } else if input.is_dir() {
+        println!("Patching directory {:?} into {:?} at {:?}.", input, archive_path, output_path);
+        patch_directory(&mut archive, &input, &output_path);
+    } else {
+        eprintln!("Input path {:?} is neither a file nor a directory.", input);
+    }
+}
+
+fn patch_file(archive: &mut Pk2, file_path: &Utf8Path, archive_path: &Utf8Path) {
+    let mut buf = Vec::new();
+    let mut file = std::fs::File::open(file_path)
+        .unwrap_or_else(|e| panic!("failed to open file at {:?}: {e}", file_path));
+    file.read_to_end(&mut buf).unwrap();
+
+    archive
+        .create_file(archive_path)
+        .unwrap_or_else(|e| panic!("failed to create file at {:?} in archive: {e}", archive_path))
+        .write_all(&buf)
+        .unwrap();
+}
+
+fn patch_directory(archive: &mut Pk2, dir_path: &Utf8Path, archive_path: &Utf8Path) {
+    let mut buf = Vec::new();
+    for entry in std::fs::read_dir(dir_path).unwrap() {
+        let entry = entry.unwrap();
+        let ty = entry.file_type().unwrap();
+        let path = Utf8PathBuf::from_path_buf(entry.path()).unwrap();
+        let file_name = path.file_name().unwrap();
+        let target_path = archive_path.join(file_name);
+
+        if ty.is_dir() {
+            patch_directory(archive, &path, &target_path);
+        } else if ty.is_file() {
+            let mut file = std::fs::File::open(&path).unwrap();
+            file.read_to_end(&mut buf).unwrap();
+            archive
+                .create_file(&target_path)
+                .unwrap_or_else(|e| {
+                    panic!("failed to create file at {:?} in archive: {e}", target_path)
+                })
+                .write_all(&buf)
+                .unwrap();
+            buf.clear();
         }
     }
 }
