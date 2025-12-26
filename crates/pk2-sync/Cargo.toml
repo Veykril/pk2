@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-pk2 = { path = "../../", features = ["std"]}
+pk2 = { path = "../../", features = ["std"], version = "0.3.0" }
 
 [dev-dependencies]
-pk2 = { path = "../../", features = ["std"] }
+pk2 = { path = "../../", features = ["std"], version = "0.3.0"  }
