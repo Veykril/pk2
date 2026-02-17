@@ -311,7 +311,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn key_lenght() {
+    fn key_length() {
         // Key must be at least 4 bytes
         assert!(matches!(Blowfish::new(b""), Err(InvalidKey)));
         assert!(matches!(Blowfish::new(b"a"), Err(InvalidKey)));

@@ -11,11 +11,11 @@ use crate::parse::{read_le_u8, read_le_u16, read_le_u32, read_le_u64};
 #[derive(Copy, Clone)]
 struct RawPackFileEntry {
     ty: u8, //0 = Empty, 1 = Directory, 2  = File
-    name: [u8; 81],
+    name: [u8; Self::NAME_BYTES],
     access: FILETIME,
     create: FILETIME,
     modify: FILETIME,
-    position: u64, // Position of data for files, position of children for directorys
+    position: u64, // Position of data for files, position of children for directories
     size: u32,
     next_block: u64,
     _padding: [u8; 2],
@@ -25,6 +25,8 @@ impl RawPackFileEntry {
     const TY_EMPTY: u8 = 0;
     const TY_DIRECTORY: u8 = 1;
     const TY_FILE: u8 = 2;
+
+    const NAME_BYTES: usize = 81;
 }
 
 /// An entry of a [`PackBlock`].
@@ -50,7 +52,7 @@ impl NonEmptyEntry {
 
     #[allow(clippy::result_unit_err)]
     pub fn set_name(&mut self, name: &str) -> Result<(), ()> {
-        if name.len() > 81 {
+        if name.len() >= RawPackFileEntry::NAME_BYTES {
             return Err(());
         }
         self.name = Box::from(name);
@@ -216,7 +218,7 @@ impl PackEntry {
             ty @ (RawPackFileEntry::TY_DIRECTORY | RawPackFileEntry::TY_FILE) => {
                 let name = {
                     let s;
-                    (s, *buffer) = buffer.split_at(81);
+                    (s, *buffer) = buffer.split_at(RawPackFileEntry::NAME_BYTES);
                     let end = s.iter().position(|b| *b == 0).unwrap_or(s.len());
                     let s = &s[..end];
                     #[cfg(feature = "euc-kr")]
@@ -284,8 +286,9 @@ impl PackEntry {
                 let name = &encoding_rs::EUC_KR.encode(&entry.name).0;
                 #[cfg(not(feature = "euc-kr"))]
                 let name = entry.name.as_bytes();
-                buffer[1..][..name.len().min(80)].copy_from_slice(&name[..name.len().min(80)]);
-                buffer[81] = 0;
+                let name_len = name.len().min(RawPackFileEntry::NAME_BYTES - 1);
+                buffer[1..][..name_len].copy_from_slice(&name[..name_len]);
+                buffer[1..][name_len..=RawPackFileEntry::NAME_BYTES].fill(0);
                 buffer[82..86].copy_from_slice(&entry.access_time.dwLowDateTime.to_le_bytes());
                 buffer[86..90].copy_from_slice(&entry.access_time.dwHighDateTime.to_le_bytes());
                 buffer[90..94].copy_from_slice(&entry.create_time.dwLowDateTime.to_le_bytes());
@@ -536,10 +539,15 @@ mod test {
         let mut entry =
             PackEntry::new_file("old.txt", StreamOffset(NonZeroU64::new(100).unwrap()), 50, None);
         let inner = entry.as_non_empty_mut().unwrap();
-        let long_name = "a".repeat(82); // > 81 bytes
-        assert!(inner.set_name(&long_name).is_err());
-        // Name should be unchanged
-        assert_eq!(inner.name(), "old.txt");
+        // Exactly 80 bytes should succeed
+        let max_name = "a".repeat(RawPackFileEntry::NAME_BYTES - 1);
+        assert!(inner.set_name(&max_name).is_ok());
+        assert_eq!(inner.name(), max_name);
+        // 81 bytes should fail
+        let too_long = "a".repeat(RawPackFileEntry::NAME_BYTES);
+        assert!(inner.set_name(&too_long).is_err());
+        // Name should be unchanged from the last successful set
+        assert_eq!(inner.name(), max_name);
     }
 
     #[test]
