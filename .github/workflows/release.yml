@@ -62,6 +62,7 @@ jobs:
       - name: Upload binary
         uses: taiki-e/upload-rust-binary-action@v1
         with:
+          bin: pk2_mate
           package: pk2_mate
           target: ${{ matrix.target }}
           build-tool: ${{ contains(matrix.target, 'aarch64-unknown-linux') && 'cross' || 'cargo' }}
