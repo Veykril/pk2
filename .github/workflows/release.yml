@@ -10,13 +10,18 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Tag name for the release"
+        # The tag must already exist; the binaries are built from it.
+        description: "Tag name for the release (must already exist)"
         required: true
         type: string
 
 env:
   CARGO_TERM_COLOR: always
   TAG_NAME: ${{ inputs.tag_name || github.ref_name }}
+
+concurrency:
+  group: release-${{ inputs.tag_name || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   create-release:
@@ -26,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Create Release
-        run: gh release create ${{ env.TAG_NAME }} --draft --generate-notes
+        run: gh release view "$TAG_NAME" || gh release create "$TAG_NAME" --draft --generate-notes
 
   upload-assets:
     name: ${{ matrix.target }}
@@ -57,7 +62,6 @@ jobs:
       - name: Upload binary
         uses: taiki-e/upload-rust-binary-action@v1
         with:
-          bin: pk2_mate
           package: pk2_mate
           target: ${{ matrix.target }}
           build-tool: ${{ contains(matrix.target, 'aarch64-unknown-linux') && 'cross' || 'cargo' }}
