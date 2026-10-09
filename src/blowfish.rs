@@ -13,6 +13,7 @@ impl fmt::Display for InvalidKey {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct Blowfish {
     s: [[u32; 256]; 4],
     p: [u32; 18],
@@ -33,12 +34,46 @@ fn next_u32_wrap(buf: &[u8], offset: &mut usize) -> u32 {
 }
 
 impl Blowfish {
+    /// The default PK2 salt used for key expansion.
+    pub const PK2_SALT: &[u8; 10] = &[0x03, 0xF8, 0xE4, 0x44, 0x88, 0x99, 0x3F, 0x64, 0xFE, 0x35];
+
+    /// Creates a cipher using the default PK2 salt.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidKey`] if `key` is not 4 through 56 bytes long.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cipher = pk2::blowfish::Blowfish::new(b"testkey").unwrap();
+    /// ```
     pub fn new(key: &[u8]) -> Result<Self, InvalidKey> {
+        Self::new_with_salt(key, Self::PK2_SALT)
+    }
+
+    /// Creates a cipher using a caller-supplied salt.
+    ///
+    /// Salt bytes are XORed with the corresponding key bytes before key expansion.
+    /// An empty salt leaves the key unchanged; salt bytes beyond the key length are ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidKey`] if `key` is not 4 through 56 bytes long.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cipher = pk2::blowfish::Blowfish::new_with_salt(b"testkey", b"salt").unwrap();
+    /// ```
+    pub fn new_with_salt(key: &[u8], salt: &[u8]) -> Result<Self, InvalidKey> {
         if key.len() < 4 || key.len() > 56 {
             return Err(InvalidKey);
         }
         let mut key = key.to_vec();
-        gen_final_blowfish_key_inplace(&mut key);
+        for (byte, salt) in key.iter_mut().zip(salt) {
+            *byte ^= salt;
+        }
         let mut this = Blowfish { p: P, s: S };
         this.expand_key(&key);
         Ok(this)
@@ -125,19 +160,6 @@ impl Blowfish {
         l ^= self.p[1];
         r ^= self.p[0];
         (r, l)
-    }
-}
-
-fn gen_final_blowfish_key_inplace(key: &mut [u8]) {
-    const PK2_SALT: &[u8; 10] = &[0x03, 0xF8, 0xE4, 0x44, 0x88, 0x99, 0x3F, 0x64, 0xFE, 0x35];
-
-    let key_len = key.len().min(56);
-
-    let mut base_key = [0; 56];
-    base_key[0..PK2_SALT.len()].copy_from_slice(PK2_SALT);
-
-    for i in 0..key_len {
-        key[i] ^= base_key[i];
     }
 }
 
@@ -320,6 +342,55 @@ mod tests {
         // Key must be at most 56 bytes
         let long_key = [0u8; 57];
         assert!(matches!(Blowfish::new(&long_key), Err(InvalidKey)));
+    }
+
+    #[test]
+    fn custom_salt_key_length() {
+        for len in [0, 1, 2, 3, 57, 64] {
+            for salt in [&b""[..], &b"salt"[..]] {
+                assert!(matches!(Blowfish::new_with_salt(&vec![0x42; len], salt), Err(InvalidKey)));
+            }
+        }
+    }
+
+    #[test]
+    fn custom_salt_matches_key_expansion() {
+        let key: Vec<u8> = (0..56).collect();
+        let salt: Vec<u8> = (1..=56).collect();
+        for key_len in 4..=56 {
+            for salt_len in [0, 2, 10, 56] {
+                let cipher = Blowfish::new_with_salt(&key[..key_len], &salt[..salt_len]).unwrap();
+                let mut expected = Blowfish { p: P, s: S };
+                let mut key = key[..key_len].to_vec();
+                for i in 0..key_len.min(salt_len) {
+                    key[i] ^= salt[i];
+                }
+                expected.expand_key(&key);
+                assert_eq!(cipher.p, expected.p);
+                assert_eq!(cipher.s, expected.s);
+
+                let copied = cipher;
+                assert_eq!(copied.p, cipher.p);
+                assert_eq!(copied.s, cipher.s);
+
+                let mut data = *b"synthetic blocks";
+                cipher.encrypt(&mut data);
+                assert_ne!(&data, b"synthetic blocks");
+                copied.decrypt(&mut data);
+                assert_eq!(&data, b"synthetic blocks");
+            }
+        }
+    }
+
+    #[test]
+    fn default_salt_equivalence() {
+        for len in 4..=56 {
+            let key = vec![0x42; len];
+            let default = Blowfish::new(&key).unwrap();
+            let explicit = Blowfish::new_with_salt(&key, Blowfish::PK2_SALT).unwrap();
+            assert_eq!(default.p, explicit.p);
+            assert_eq!(default.s, explicit.s);
+        }
     }
 
     #[test]
