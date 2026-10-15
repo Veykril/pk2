@@ -12,7 +12,6 @@ use crate::parse::{read_le_u8, read_le_u16, read_le_u32, read_le_u64};
 struct RawPackFileEntry {
     ty: u8, //0 = Empty, 1 = Directory, 2  = File
     name: [u8; Self::NAME_BYTES],
-    access: FILETIME,
     create: FILETIME,
     modify: FILETIME,
     position: u64, // Position of data for files, position of children for directories
@@ -26,7 +25,7 @@ impl RawPackFileEntry {
     const TY_DIRECTORY: u8 = 1;
     const TY_FILE: u8 = 2;
 
-    const NAME_BYTES: usize = 81;
+    const NAME_BYTES: usize = 89;
 }
 
 /// An entry of a [`PackBlock`].
@@ -40,7 +39,6 @@ pub struct PackEntry {
 pub struct NonEmptyEntry {
     kind: DirectoryOrFile,
     name: Box<str>,
-    pub access_time: FILETIME,
     pub create_time: FILETIME,
     pub modify_time: FILETIME,
 }
@@ -110,7 +108,6 @@ impl PackEntry {
             entry: Some(NonEmptyEntry {
                 kind: DirectoryOrFile::Directory { pos_children },
                 name: name.into(),
-                access_time: FILETIME::default(),
                 create_time: FILETIME::default(),
                 modify_time: FILETIME::default(),
             }),
@@ -128,7 +125,6 @@ impl PackEntry {
             entry: Some(NonEmptyEntry {
                 kind: DirectoryOrFile::File { pos_data, size },
                 name: name.into(),
-                access_time: FILETIME::default(),
                 create_time: FILETIME::default(),
                 modify_time: FILETIME::default(),
             }),
@@ -227,10 +223,6 @@ impl PackEntry {
                     let name = alloc::string::String::from_utf8_lossy(s);
                     name.into_owned().into_boxed_str()
                 };
-                let access_time = FILETIME {
-                    dwLowDateTime: read_le_u32(buffer).unwrap(),
-                    dwHighDateTime: read_le_u32(buffer).unwrap(),
-                };
                 let create_time = FILETIME {
                     dwLowDateTime: read_le_u32(buffer).unwrap(),
                     dwHighDateTime: read_le_u32(buffer).unwrap(),
@@ -247,7 +239,6 @@ impl PackEntry {
                 Ok(PackEntry {
                     entry: Some(NonEmptyEntry {
                         name,
-                        access_time,
                         create_time,
                         modify_time,
                         kind: if ty == RawPackFileEntry::TY_DIRECTORY {
@@ -289,8 +280,6 @@ impl PackEntry {
                 let name_len = name.len().min(RawPackFileEntry::NAME_BYTES - 1);
                 buffer[1..][..name_len].copy_from_slice(&name[..name_len]);
                 buffer[1..][name_len..=RawPackFileEntry::NAME_BYTES].fill(0);
-                buffer[82..86].copy_from_slice(&entry.access_time.dwLowDateTime.to_le_bytes());
-                buffer[86..90].copy_from_slice(&entry.access_time.dwHighDateTime.to_le_bytes());
                 buffer[90..94].copy_from_slice(&entry.create_time.dwLowDateTime.to_le_bytes());
                 buffer[94..98].copy_from_slice(&entry.create_time.dwHighDateTime.to_le_bytes());
                 buffer[98..102].copy_from_slice(&entry.modify_time.dwLowDateTime.to_le_bytes());
@@ -330,6 +319,36 @@ mod test {
     unsafe impl bytemuck::Zeroable for RawPackFileEntry {}
 
     #[test]
+    fn pack_entry_long_name_layout() {
+        let name = "n".repeat(88);
+        let mut buffer = [0u8; 128];
+        buffer[0] = 2;
+        buffer[1..89].copy_from_slice(name.as_bytes());
+        buffer[90..98].copy_from_slice(&123456789u64.to_le_bytes());
+        buffer[98..106].copy_from_slice(&987654321u64.to_le_bytes());
+        buffer[106..114].copy_from_slice(&10000u64.to_le_bytes());
+        buffer[114..118].copy_from_slice(&5000u32.to_le_bytes());
+        buffer[118..126].copy_from_slice(&20000u64.to_le_bytes());
+
+        let entry = PackEntry::parse(&buffer).unwrap();
+        assert_eq!(entry.name(), Some(name.as_str()));
+        let mut expected = PackEntry::new_file(
+            name,
+            StreamOffset(NonZeroU64::new(10000).unwrap()),
+            5000,
+            NonZeroU64::new(20000).map(BlockOffset),
+        );
+        let non_empty = expected.as_non_empty_mut().unwrap();
+        non_empty.create_time = FILETIME { dwLowDateTime: 123456789, dwHighDateTime: 0 };
+        non_empty.modify_time = FILETIME { dwLowDateTime: 987654321, dwHighDateTime: 0 };
+        assert_eq!(entry, expected);
+
+        let mut written = [0xff; 128];
+        expected.write_to(&mut written);
+        assert_eq!(written, buffer);
+    }
+
+    #[test]
     fn pack_entry_read_empty() {
         let mut buf = [0u8; PackEntry::PK2_FILE_ENTRY_SIZE];
         assert_eq!(PackEntry::parse(&buf).unwrap(), PackEntry::new_empty(None));
@@ -345,8 +364,7 @@ mod test {
     fn pack_entry_read_directory() {
         let mut entry = RawPackFileEntry {
             ty: RawPackFileEntry::TY_DIRECTORY,
-            name: [0; 81],
-            access: FILETIME::default(),
+            name: [0; 89],
             create: FILETIME::default(),
             modify: FILETIME::default(),
             position: 12345,
@@ -364,7 +382,6 @@ mod test {
                         pos_children: NonZeroU64::new(12345).map(ChainOffset).unwrap()
                     },
                     name: "foobar".into(),
-                    access_time: FILETIME::default(),
                     create_time: FILETIME::default(),
                     modify_time: FILETIME::default(),
                 }),
@@ -377,8 +394,7 @@ mod test {
     fn pack_entry_read_file() {
         let mut entry = RawPackFileEntry {
             ty: RawPackFileEntry::TY_FILE,
-            name: [0; 81],
-            access: FILETIME::default(),
+            name: [0; 89],
             create: FILETIME::default(),
             modify: FILETIME::default(),
             position: 12345,
@@ -397,7 +413,6 @@ mod test {
                         size: 10000
                     },
                     name: "foobar".into(),
-                    access_time: FILETIME::default(),
                     create_time: FILETIME::default(),
                     modify_time: FILETIME::default(),
                 }),
@@ -539,11 +554,11 @@ mod test {
         let mut entry =
             PackEntry::new_file("old.txt", StreamOffset(NonZeroU64::new(100).unwrap()), 50, None);
         let inner = entry.as_non_empty_mut().unwrap();
-        // Exactly 80 bytes should succeed
+
         let max_name = "a".repeat(RawPackFileEntry::NAME_BYTES - 1);
         assert!(inner.set_name(&max_name).is_ok());
         assert_eq!(inner.name(), max_name);
-        // 81 bytes should fail
+
         let too_long = "a".repeat(RawPackFileEntry::NAME_BYTES);
         assert!(inner.set_name(&too_long).is_err());
         // Name should be unchanged from the last successful set

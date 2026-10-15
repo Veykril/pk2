@@ -182,9 +182,7 @@ fn extract_single_file<R: Read + Seek>(
             if let Some(time) = file.modify_time() {
                 times = times.set_modified(time);
             }
-            if let Some(time) = file.access_time() {
-                times = times.set_accessed(time);
-            }
+
             if let Err(e) = os_file.set_times(times) {
                 eprintln!("Failed writing file times at {file_path:?}: {e}");
             }
@@ -218,9 +216,7 @@ fn extract_files(
                         if let Some(time) = file.modify_time() {
                             times = times.set_modified(time);
                         }
-                        if let Some(time) = file.access_time() {
-                            times = times.set_accessed(time);
-                        }
+
                         if let Err(e) = os_file.set_times(times) {
                             eprintln!("Failed writing file times at {file_path:?}: {e}");
                         }

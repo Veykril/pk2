@@ -42,10 +42,6 @@ impl<'pk2, Buffer, L: LockChoice> File<'pk2, Buffer, L> {
         self.entry().modify_time.into_systime()
     }
 
-    pub fn access_time(&self) -> Option<SystemTime> {
-        self.entry().access_time.into_systime()
-    }
-
     pub fn create_time(&self) -> Option<SystemTime> {
         self.entry().create_time.into_systime()
     }
@@ -180,10 +176,6 @@ where
         self.entry().modify_time.into_systime()
     }
 
-    pub fn access_time(&self) -> Option<SystemTime> {
-        self.entry().access_time.into_systime()
-    }
-
     pub fn create_time(&self) -> Option<SystemTime> {
         self.entry().create_time.into_systime()
     }
@@ -191,10 +183,6 @@ where
     pub fn set_modify_time(&mut self, time: SystemTime) {
         self.update_modify_time = false;
         self.entry_mut().modify_time = time.into();
-    }
-
-    pub fn set_access_time(&mut self, time: SystemTime) {
-        self.entry_mut().access_time = time.into();
     }
 
     pub fn set_create_time(&mut self, time: SystemTime) {
@@ -210,7 +198,6 @@ where
         let other = other.entry();
         this.modify_time = other.modify_time;
         this.create_time = other.create_time;
-        this.access_time = other.access_time;
     }
 
     pub fn size(&self) -> u32 {
@@ -451,10 +438,6 @@ impl<'pk2, Buffer, L: LockChoice> Directory<'pk2, Buffer, L> {
 
     pub fn modify_time(&self) -> Option<SystemTime> {
         self.entry().modify_time.into_systime()
-    }
-
-    pub fn access_time(&self) -> Option<SystemTime> {
-        self.entry().access_time.into_systime()
     }
 
     pub fn create_time(&self) -> Option<SystemTime> {

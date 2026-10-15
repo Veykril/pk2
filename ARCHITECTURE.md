@@ -72,8 +72,8 @@ The 256-byte archive header containing:
 #### `PackEntry`
 Represents a single entry in the archive:
 - **Type**: Empty (0), Directory (1), or File (2)
-- **Name**: Up to 81 bytes (EUC-KR encoded for Korean clients)
-- **Timestamps**: Access, Create, Modify (Windows FILETIME format)
+- **Name**: 89-byte field, holding up to 88 bytes plus a null terminator (EUC-KR encoded for Korean clients)
+- **Timestamps**: Create, Modify (Windows FILETIME format)
 - **Position**: File data offset or directory children chain offset
 - **Size**: File size in bytes
 - **Next Block**: Pointer to continuation block

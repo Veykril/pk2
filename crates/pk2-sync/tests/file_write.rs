@@ -308,21 +308,6 @@ fn set_modify_time() {
 }
 
 #[test]
-fn set_access_time() {
-    let mut archive = Pk2::create_new_in_memory("test").unwrap();
-    let custom_time = SystemTime::UNIX_EPOCH;
-
-    {
-        let mut file = archive.create_file("/test.txt").unwrap();
-        file.set_access_time(custom_time);
-        file.write_all(b"data").unwrap();
-    }
-
-    let file = archive.open_file("/test.txt").unwrap();
-    assert_eq!(file.access_time(), Some(custom_time));
-}
-
-#[test]
 fn set_create_time() {
     let mut archive = Pk2::create_new_in_memory("test").unwrap();
     let custom_time = SystemTime::UNIX_EPOCH;
