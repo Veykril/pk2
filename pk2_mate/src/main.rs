@@ -254,6 +254,8 @@ fn repack(archive_path: Utf8PathBuf, key: String, output_key: String, out: Optio
     let folder = in_archive.open_directory("/").unwrap();
     println!("Repacking {:?} into {:?}.", archive_path, out_archive_path);
     repack_files(&mut out_archive, folder, "/".as_ref());
+    drop(out_archive);
+    pad_archive_to_page(&out_archive_path);
 }
 
 fn repack_files(out_archive: &mut Pk2, folder: Directory<'_, impl Read + Seek>, path: &Utf8Path) {
@@ -289,6 +291,8 @@ fn pack(directory: Utf8PathBuf, key: String, archive: Option<Utf8PathBuf>) {
         .unwrap_or_else(|e| panic!("failed to create archive at {:?}: {e}", out_archive_path));
     println!("Packing {:?} into {:?}.", directory, out_archive_path);
     pack_files(&mut out_archive, &directory, &directory);
+    drop(out_archive);
+    pad_archive_to_page(&out_archive_path);
 }
 
 fn pack_files(out_archive: &mut Pk2, dir_path: &Utf8Path, base: &Utf8Path) {
@@ -402,6 +406,32 @@ fn patch(
         patch_directory(&mut archive, &input, &output_path, dry);
     } else {
         eprintln!("Input path {:?} is neither a file nor a directory.", input);
+        return;
+    }
+    drop(archive);
+    if !dry {
+        pad_archive_to_page(&archive_path);
+    }
+}
+
+/// Silkroad's `GFXFileManager.dll` (`CJArchiveFm::Read`) caches `.pk2` files in fixed
+/// 4096-byte (`0x1000`) pages and fails (`dwRead != 0x1000`) on the first read of a
+/// trailing partial page if the archive size is not a multiple of 4096.
+fn pad_archive_to_page(archive_path: &Utf8Path) {
+    const PK2_PAGE_SIZE: u64 = 4096;
+    let Ok(mut file) = std::fs::OpenOptions::new().read(true).write(true).open(archive_path) else {
+        return;
+    };
+    let Ok(len) = file.seek(std::io::SeekFrom::End(0)) else {
+        return;
+    };
+    let rem = len % PK2_PAGE_SIZE;
+    if rem != 0 {
+        let pad = (PK2_PAGE_SIZE - rem) as usize;
+        let zeros = vec![0u8; pad];
+        if let Err(e) = file.write_all(&zeros) {
+            eprintln!("Failed padding archive {:?} to 4096-byte page boundary: {e}", archive_path);
+        }
     }
 }
 
